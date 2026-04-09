@@ -55,6 +55,8 @@ public enum PvpResolvedEventKind
     ActionLogged,
     PlayerLocked,
     PlayerUnlocked,
+    HeroStateChanged,
+    FrontlineStateChanged,
     RoundResolved,
     MatchEnded
 }

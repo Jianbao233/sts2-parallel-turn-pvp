@@ -270,6 +270,10 @@ public sealed class PvpMatchRuntime
         CurrentRound.Phase = PvpMatchPhase.RoundEnd;
         LastAuthoritativeResult = result;
         SnapshotVersion++;
+        foreach (PvpResolvedEvent resolvedEvent in result.Events)
+        {
+            Log.Info($"[ParallelTurnPvp] RoundEvent kind={resolvedEvent.Kind} text={resolvedEvent.Text}");
+        }
         return result;
     }
 
@@ -477,7 +481,7 @@ public sealed class PvpMatchRuntime
     private int GetRevealBudget(ulong viewerId)
     {
         return CurrentRound.LogsByPlayer.TryGetValue(viewerId, out PvpActionLog? log)
-            ? log.Actions.Count(action => action.ActionType == PvpActionType.PlayCard)
+            ? log.Actions.Count(action => action.ActionType is PvpActionType.PlayCard or PvpActionType.UsePotion)
             : 0;
     }
 }
