@@ -1,0 +1,6 @@
+﻿{
+  "FRONTLINE_BRACE.title": "Frontline Brace",
+  "FRONTLINE_BRACE.description": "Gain {Block:diff()} [gold]Block[/gold] on your [gold]frontline[/gold]. If no frontline is alive, gain it yourself.",
+  "BREAK_FORMATION.title": "Break Formation",
+  "BREAK_FORMATION.description": "Deal {Damage:diff()} damage. [gold]Frontline[/gold] intercepts first."
+}

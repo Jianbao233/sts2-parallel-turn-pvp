@@ -1,0 +1,5 @@
+{
+  "PARALLELTURN_PVP.title": "ParallelTurn PvP",
+  "PARALLELTURN_PVP.description": "启动 2 人调试竞技场，使用固定的 死灵缚者 牌组、前线单位与并行回合规则。",
+  "PARALLELTURN_PVP.LOCKED.description": "需要先解锁自定义模式，才能进入 ParallelTurn PvP 调试竞技场。"
+}

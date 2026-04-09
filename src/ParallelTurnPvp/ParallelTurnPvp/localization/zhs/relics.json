@@ -1,0 +1,4 @@
+﻿{
+  "OPENING_SIGNAL.title": "开场信号",
+  "OPENING_SIGNAL.description": "第 1 回合开始时，获得 {Energy:energyIcons()}。"
+}

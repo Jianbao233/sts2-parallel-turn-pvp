@@ -1,0 +1,6 @@
+﻿<Project>
+  <PropertyGroup>
+    <GodotPath>K:/杀戮尖塔mod制作/Godot_v4.5.1/Godot_v4.5.1/Godot_v4.5.1-stable_mono_win64.exe</GodotPath>
+    <SteamLibraryPath Condition="'$(SteamLibraryPath)' == '' and Exists('K:/SteamLibrary/steamapps/common/Slay the Spire 2')">K:/SteamLibrary/steamapps</SteamLibraryPath>
+  </PropertyGroup>
+</Project>

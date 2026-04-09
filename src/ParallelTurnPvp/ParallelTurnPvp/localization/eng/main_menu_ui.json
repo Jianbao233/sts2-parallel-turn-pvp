@@ -1,0 +1,5 @@
+{
+  "PARALLELTURN_PVP.title": "ParallelTurn PvP",
+  "PARALLELTURN_PVP.description": "Launch the 2-player debug arena with fixed Necrobinder loadouts and frontline routing.",
+  "PARALLELTURN_PVP.LOCKED.description": "Unlock Custom mode to access the ParallelTurn PvP debug arena."
+}

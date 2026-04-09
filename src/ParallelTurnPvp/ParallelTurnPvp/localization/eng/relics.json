@@ -1,0 +1,4 @@
+﻿{
+  "OPENING_SIGNAL.title": "Opening Signal",
+  "OPENING_SIGNAL.description": "At the start of round 1, gain {Energy:energyIcons()}."
+}

@@ -1,0 +1,4 @@
+﻿{
+  "FRONTLINE_SALVE.title": "前线疗剂",
+  "FRONTLINE_SALVE.description": "恢复你的[gold]前线[/gold] {HealAmount} 点生命。若前线不存在，则恢复本体。"
+}

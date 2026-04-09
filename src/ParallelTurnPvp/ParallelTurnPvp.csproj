@@ -1,0 +1,63 @@
+﻿<Project Sdk="Godot.NET.Sdk/4.5.1" InitialTargets="CheckDependencyPaths">
+  <Import Project=".\Sts2PathDiscovery.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>true</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <DefaultItemExcludes>packages/**</DefaultItemExcludes>
+    <AppOutputBase>$(MSBuildProjectDirectory)\</AppOutputBase>
+    <PathMap>$(AppOutputBase)=.\</PathMap>
+    <RootNamespace>ParallelTurnPvp</RootNamespace>
+    <AssemblyName>ParallelTurnPvp</AssemblyName>
+    <NoWarn>$(NoWarn);MSB3270;CA2255</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(Sts2DataDir)')">
+    <Reference Include="0Harmony">
+      <HintPath>$(Sts2DataDir)/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="sts2">
+      <HintPath>$(Sts2DataDir)/sts2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="ParallelTurnPvp/**" />
+    <Compile Remove="images/**" />
+    <EmbeddedResource Remove="ParallelTurnPvp/**" />
+    <EmbeddedResource Remove="images/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="project.godot" />
+    <None Include="export_presets.cfg" />
+    <None Include="mod_manifest.json" />
+    <None Include="ParallelTurnPvp/**" />
+    <None Include="images/**" />
+    <None Include="Directory.Build.props" />
+  </ItemGroup>
+
+  <Target Name="CheckDependencyPaths">
+    <Error Text="Slay the Spire 2 data not found at '$(Sts2DataDir)'" Condition="'$(Sts2DataDir)' == '' or !Exists('$(Sts2DataDir)')" />
+  </Target>
+
+  <Target Name="CopyToModsFolderOnBuild" AfterTargets="PostBuildEvent">
+    <MakeDir Directories="$(ModsPath)$(MSBuildProjectName)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModsPath)$(MSBuildProjectName)" />
+    <Copy SourceFiles="mod_manifest.json" DestinationFolder="$(ModsPath)$(MSBuildProjectName)" />
+  </Target>
+
+  <Target Name="NeedGodotForPublish" BeforeTargets="Publish">
+    <Error Text="Godot path not found at '$(GodotPath)'" Condition="'$(GodotPath)' == '' or !Exists('$(GodotPath)')" />
+  </Target>
+
+  <Target Name="GodotPublish" AfterTargets="Publish" Condition="'$(GodotPath)' != '' and Exists('$(GodotPath)') and '$(IsInnerGodotExport)' != 'true'">
+    <MakeDir Directories="$(ModsPath)$(MSBuildProjectName)" />
+    <Exec Command="&quot;$(GodotPath)&quot; --headless --path &quot;$(MSBuildProjectDirectory)&quot; --export-pack &quot;BasicExport&quot; &quot;$(ModsPath)$(MSBuildProjectName)/$(MSBuildProjectName).pck&quot;" EnvironmentVariables="IsInnerGodotExport=true;MSBUILDDISABLENODEREUSE=1" />
+  </Target>
+</Project>

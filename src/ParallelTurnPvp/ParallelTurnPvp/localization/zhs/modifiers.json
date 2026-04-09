@@ -1,0 +1,6 @@
+﻿{
+  "ParallelTurnPvP_Debug.title": "ParallelTurn PvP 调试模式",
+  "ParallelTurnPvP_Debug.description": "固定 2 人 PvP Arena，使用 Necrobinder 前线与回合日志骨架。",
+  "ParallelTurnPvP_Debug.neowTitle": "进入调试竞技场",
+  "ParallelTurnPvP_Debug.neowDescription": "载入固定 PvP 牌组、遗物、药水，并直接进入调试战斗。"
+}

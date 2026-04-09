@@ -1,0 +1,4 @@
+﻿{
+  "FRONTLINE_SALVE.title": "Frontline Salve",
+  "FRONTLINE_SALVE.description": "Heal your [gold]frontline[/gold] for {HealAmount}. If no frontline is alive, heal yourself."
+}

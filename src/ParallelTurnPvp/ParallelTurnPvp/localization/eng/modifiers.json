@@ -1,0 +1,6 @@
+﻿{
+  "ParallelTurnPvP_Debug.title": "ParallelTurn PvP Debug",
+  "ParallelTurnPvP_Debug.description": "A fixed 2-player PvP arena with Necrobinder frontlines and round logging.",
+  "ParallelTurnPvP_Debug.neowTitle": "Enter Debug Arena",
+  "ParallelTurnPvP_Debug.neowDescription": "Load the fixed PvP deck, relics, potions, and begin the debug arena."
+}

@@ -1,0 +1,11 @@
+{
+  "id": "ParallelTurnPvp",
+  "name": "ParallelTurnPvp",
+  "author": "Codex",
+  "version": "0.1.0",
+  "description": "Parallel turn PvP debug arena for Slay the Spire 2.",
+  "pck_name": "ParallelTurnPvp",
+  "has_pck": true,
+  "has_dll": true,
+  "affects_gameplay": true
+}
