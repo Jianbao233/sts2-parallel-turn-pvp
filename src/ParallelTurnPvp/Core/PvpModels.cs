@@ -1,6 +1,5 @@
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
-using MegaCrit.Sts2.Core.DevConsole;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
@@ -257,24 +256,8 @@ public sealed class PvpMatchRuntime
         }
 
         CurrentRound.FirstLockRewardGranted = true;
-        NetGameType netType = RunManager.Instance.NetService.Type;
-        if (netType is not (NetGameType.Host or NetGameType.Singleplayer))
-        {
-            Log.Info($"[ParallelTurnPvp] Client acknowledged pending early lock reward. player={player.NetId} round={CurrentRound.RoundIndex}");
-            return null;
-        }
-
-        int allyIndex = GetAllyIndex(player.Creature.CombatState, player.Creature);
-        if (allyIndex < 0)
-        {
-            Log.Warn($"[ParallelTurnPvp] Failed to queue early lock reward because ally index could not be resolved. player={player.NetId} round={CurrentRound.RoundIndex}");
-            return null;
-        }
-
-        string command = $"heal {EarlyLockHealAmount} {allyIndex}";
-        RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(new ConsoleCmdGameAction(player, command));
-        Log.Info($"[ParallelTurnPvp] Queued synchronized early lock reward. player={player.NetId} heal={EarlyLockHealAmount} allyIndex={allyIndex} round={CurrentRound.RoundIndex} cmd='{command}'");
-        return player;
+        Log.Warn($"[ParallelTurnPvp] Early lock reward is disabled in live combat. player={player.NetId} round={CurrentRound.RoundIndex} heal={EarlyLockHealAmount} reason=ConsoleCmdGameAction caused replay/checksum divergence");
+        return null;
     }
 
     public PvpRoundResult ResolveLiveRound(CombatState combatState)
@@ -503,24 +486,6 @@ public sealed class PvpMatchRuntime
             : 0;
     }
 
-    private static int GetAllyIndex(CombatState? combatState, Creature creature)
-    {
-        if (combatState == null)
-        {
-            return -1;
-        }
-
-        IReadOnlyList<Creature> allies = combatState.Allies;
-        for (int i = 0; i < allies.Count; i++)
-        {
-            if (ReferenceEquals(allies[i], creature))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
 }
 
 internal static class PvpIntentClassifier

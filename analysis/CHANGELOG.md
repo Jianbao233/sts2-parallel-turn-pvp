@@ -1,5 +1,9 @@
 ﻿# CHANGELOG
 
+## 2026-04-10 Sync Fix
+- reverted the experimental early-lock heal implementation that used ConsoleCmdGameAction("heal ...")
+- confirmed from host/client logs that the console-command path triggers RecordInitialState must be called first on clients and corrupts replay/checksum tracking
+- restored the stable baseline: the early-lock heal rule stays in design docs, but live combat execution is disabled again to avoid StateDivergence
 ## 2026-04-10 Stable Checkpoint
 - potions now count toward intent reveal budget as well as intent slots
 - `PvpRoundResolver` now emits structured round events for actions and hero/frontline deltas
@@ -15,3 +19,4 @@
 - integrated optional `DirectConnectIP` compatibility for no-Steam/IP testing
 - fixed card localization, potion display, action queue poisoning, targeting, remote layout, and custom win flow
 - introduced limited-intent runtime model and locked design rules
+
