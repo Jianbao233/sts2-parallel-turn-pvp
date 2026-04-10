@@ -195,12 +195,14 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             return;
         }
 
+        bool rebuiltRound = false;
         if (RunManager.Instance.NetService.Type == NetGameType.Client &&
             CombatManager.Instance.DebugOnlyGetState() is CombatState combatState &&
             combatState.RunState == runState &&
-            ShouldRefreshClientRound(runtime, message.roundIndex))
+            ShouldRefreshClientRoundForPlanningFrame(runtime, message.roundIndex))
         {
             runtime.StartRoundFromLiveState(combatState, message.roundIndex);
+            rebuiltRound = true;
         }
 
         var frame = new PvpPlanningFrame
@@ -216,7 +218,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
         }
 
         runtime.ApplyAuthoritativePlanningFrame(frame);
-        Log.Info($"[ParallelTurnPvp] Received authoritative planning frame. round={message.roundIndex} snapshotVersion={message.snapshotVersion} revision={message.revision} submissions={frame.Submissions.Count}");
+        Log.Info($"[ParallelTurnPvp] Received authoritative planning frame. round={message.roundIndex} snapshotVersion={message.snapshotVersion} revision={message.revision} submissions={frame.Submissions.Count} rebuiltRound={rebuiltRound}");
     }
 
     private static void HandleRoundResultMessage(PvpRoundResultMessage message, ulong _)
@@ -369,6 +371,16 @@ public sealed class PvpNetBridge : IPvpSyncBridge
 
         if (incomingRoundIndex == runtime.CurrentRound.RoundIndex &&
             (runtime.CurrentRound.HasResolved || runtime.CurrentRound.PublicIntentByPlayer.Values.Any(state => state.Slots.Count > 0 || state.Locked)))
+        {
+            return true;
+        }
+
+        return runtime.CurrentRound.RoundIndex == 0;
+    }
+
+    private static bool ShouldRefreshClientRoundForPlanningFrame(PvpMatchRuntime runtime, int incomingRoundIndex)
+    {
+        if (incomingRoundIndex > runtime.CurrentRound.RoundIndex)
         {
             return true;
         }

@@ -29,3 +29,5 @@
 - planning frame now updates in real time after card, potion, end turn, and round start
 - clients now consume authoritative planning frames instead of relying only on local round reconstruction
 - intent view now prefers authoritative planning frame data when available
+
+- fixed client-side intent overlay not updating after same-round actions by preventing same-round planning-frame rebuilds and removing overly strict snapshot-version gating

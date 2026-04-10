@@ -744,11 +744,6 @@ public sealed class PvpMatchRuntime
             return null;
         }
 
-        if (CurrentRound.SnapshotAtRoundStart.SnapshotVersion > 0 && LastAuthoritativePlanningFrame.SnapshotVersion != CurrentRound.SnapshotAtRoundStart.SnapshotVersion)
-        {
-            return null;
-        }
-
         return LastAuthoritativePlanningFrame;
     }
 
