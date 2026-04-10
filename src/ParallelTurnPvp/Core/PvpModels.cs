@@ -94,6 +94,32 @@ public sealed class PvpRoundResult
     public List<PvpResolvedEvent> Events { get; } = new();
 }
 
+public sealed class PvpPlannedAction
+{
+    public int Sequence { get; init; }
+    public uint? RuntimeActionId { get; init; }
+    public PvpActionType ActionType { get; init; }
+    public string ModelEntry { get; init; } = string.Empty;
+    public PvpTargetRef Target { get; init; } = new();
+}
+
+public sealed class PvpRoundSubmission
+{
+    public int RoundIndex { get; init; }
+    public ulong PlayerId { get; init; }
+    public int RoundStartEnergy { get; init; }
+    public bool Locked { get; init; }
+    public bool IsFirstFinisher { get; init; }
+    public List<PvpPlannedAction> Actions { get; } = new();
+}
+
+public sealed class PvpPlanningFrame
+{
+    public int RoundIndex { get; init; }
+    public PvpMatchPhase Phase { get; init; }
+    public List<PvpRoundSubmission> Submissions { get; } = new();
+}
+
 public sealed class PvpRoundState
 {
     public int RoundIndex { get; set; }
@@ -114,6 +140,7 @@ public sealed class PvpMatchRuntime
     public const int EarlyLockHealAmount = 3;
     private readonly Dictionary<ulong, Player> _playersById;
     private readonly IPvpRoundResolver _resolver;
+    private readonly IPvpPlanningCompiler _planningCompiler;
     private readonly HashSet<ulong> _missingLogWarnings = new();
 
     public PvpMatchRuntime(RunState runState, IEnumerable<Player> players)
@@ -121,6 +148,7 @@ public sealed class PvpMatchRuntime
         RunState = runState;
         _playersById = players.ToDictionary(player => player.NetId);
         _resolver = new PvpRoundResolver();
+        _planningCompiler = new PvpPlanningCompiler();
     }
 
     public RunState RunState { get; }
@@ -223,6 +251,7 @@ public sealed class PvpMatchRuntime
         log.Actions.Add(action);
         UpdateIntentState(action);
         LogIntentVisibility(action.ActorPlayerId);
+        LogPlanningSubmission(action.ActorPlayerId);
     }
 
     public void LockPlayer(ulong playerId)
@@ -243,6 +272,7 @@ public sealed class PvpMatchRuntime
             ? PvpMatchPhase.Resolving
             : PvpMatchPhase.LockedWaitingPeer;
         LogIntentVisibility(playerId);
+        LogPlanningSubmission(playerId);
     }
 
     public void UnlockPlayer(ulong playerId)
@@ -388,6 +418,37 @@ public sealed class PvpMatchRuntime
         };
     }
 
+    public PvpRoundSubmission? GetPlanningSubmission(ulong playerId)
+    {
+        if (!CurrentRound.LogsByPlayer.TryGetValue(playerId, out PvpActionLog? log))
+        {
+            return null;
+        }
+
+        CurrentRound.PublicIntentByPlayer.TryGetValue(playerId, out PvpPlayerIntentState? intentState);
+        return _planningCompiler.BuildSubmission(CurrentRound.RoundIndex, log, intentState);
+    }
+
+    public PvpPlanningFrame BuildPlanningFrame()
+    {
+        var frame = new PvpPlanningFrame
+        {
+            RoundIndex = CurrentRound.RoundIndex,
+            Phase = CurrentRound.Phase
+        };
+
+        foreach (ulong playerId in CurrentRound.LogsByPlayer.Keys.OrderBy(id => id))
+        {
+            PvpRoundSubmission? submission = GetPlanningSubmission(playerId);
+            if (submission != null)
+            {
+                frame.Submissions.Add(submission);
+            }
+        }
+
+        return frame;
+    }
+
     private PvpActionLog GetOrCreateLog(ulong playerId)
     {
         EnsureCurrentRoundLogs();
@@ -511,6 +572,20 @@ public sealed class PvpMatchRuntime
                 Log.Info($"[ParallelTurnPvp] IntentView viewer={viewerId} target={targetId} startEnergy={state.RoundStartEnergy} locked={state.Locked} firstFinisher={state.IsFirstFinisher} viewerActions={viewerActionCount} targetActions={targetActionCount} reveal={visibleCount}/{state.Slots.Count} visible=[{visible}] hidden={hiddenCount} changed={changedPlayerId}");
             }
         }
+    }
+
+    private void LogPlanningSubmission(ulong changedPlayerId)
+    {
+        PvpRoundSubmission? submission = GetPlanningSubmission(changedPlayerId);
+        if (submission == null)
+        {
+            return;
+        }
+
+        string actions = submission.Actions.Count == 0
+            ? "-"
+            : string.Join(", ", submission.Actions.Select(action => $"{action.Sequence + 1}:{action.ActionType}/{action.ModelEntry}->{action.Target.Kind}[id={action.RuntimeActionId?.ToString() ?? "-"}]"));
+        Log.Info($"[ParallelTurnPvp] PlanningSubmission round={submission.RoundIndex} player={submission.PlayerId} energy={submission.RoundStartEnergy} locked={submission.Locked} first={submission.IsFirstFinisher} actions={submission.Actions.Count} [{actions}]");
     }
 
     private int GetRevealActionCount(ulong playerId)
