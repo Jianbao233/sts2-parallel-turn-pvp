@@ -1,6 +1,7 @@
-﻿param(
+param(
     [ValidateSet("Debug", "Release")]
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [switch]$DeploySecondary
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,11 @@ $ToReleaseDir = Join-Path $ProjectRoot "torelease"
 $GameModsDir = "K:\SteamLibrary\steamapps\common\Slay the Spire 2\mods"
 $ModsOutputDir = Join-Path $GameModsDir "ParallelTurnPvp"
 $DirectConnectDir = Join-Path $GameModsDir "DirectConnectIP"
+$SecondaryModsRoot = "\\DESKTOP-U51KJJ2\Mods"
+$SecondaryDataRoot = "\\DESKTOP-U51KJJ2\SlayTheSpire2"
+$SecondaryParallelTurnDir = Join-Path $SecondaryModsRoot "ParallelTurnPvp"
+$SecondaryDirectConnectDir = Join-Path $SecondaryModsRoot "DirectConnectIP"
+$SecondaryLogsDir = Join-Path $SecondaryDataRoot "logs"
 $BundleModsDir = Join-Path $ToReleaseDir "mods"
 $ParallelTurnBundleDir = Join-Path $BundleModsDir "ParallelTurnPvp"
 $DllName = "ParallelTurnPvp.dll"
@@ -18,8 +24,41 @@ $PckName = "ParallelTurnPvp.pck"
 $ManifestName = "mod_manifest.json"
 $DirectConnectManifestName = "DirectConnectIP.json"
 
+function Show-SecondaryDeployBlockedPopup {
+    param(
+        [string]$Message
+    )
+
+    try {
+        Add-Type -AssemblyName PresentationFramework -ErrorAction Stop
+        [System.Windows.MessageBox]::Show(
+            $Message,
+            "ParallelTurnPvp Secondary Deploy",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning
+        ) | Out-Null
+    }
+    catch {
+        Write-Warning "Unable to show popup notification: $($_.Exception.Message)"
+    }
+}
+
+function Copy-DirectoryContents {
+    param(
+        [string]$SourceDir,
+        [string]$DestinationDir
+    )
+
+    if (-not (Test-Path $SourceDir)) {
+        throw "Source directory not found: $SourceDir"
+    }
+
+    New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+    Copy-Item (Join-Path $SourceDir '*') -Destination $DestinationDir -Recurse -Force
+}
+
 Write-Host "=== ParallelTurnPvp Build ===" -ForegroundColor Cyan
-Write-Host "[1/3] publish ($Configuration)"
+Write-Host "[1/4] publish ($Configuration)"
 
 Push-Location $SourceRoot
 try {
@@ -43,7 +82,7 @@ if ($missing.Count -gt 0) {
     throw "Missing published artifacts: $($missing -join ', ')"
 }
 
-Write-Host "[2/3] snapshot to torelease"
+Write-Host "[2/4] snapshot to torelease"
 if (Test-Path $ToReleaseDir) {
     Get-ChildItem -Force $ToReleaseDir | Remove-Item -Recurse -Force
 }
@@ -97,6 +136,16 @@ Client flow:
 2. Click Join Server from DirectConnectIP.
 3. Enter the host IP and port.
 4. Wait for the Custom Run lobby to open.
+
+Secondary machine paths:
+- Mods: $SecondaryModsRoot
+- Data root: $SecondaryDataRoot
+- Logs: $SecondaryLogsDir
+
+Workflow:
+1. Build locally with .\build.ps1
+2. Deploy to the secondary machine with .\build.ps1 -DeploySecondary
+3. Pull the secondary machine log with .\tools\PullSecondaryLogs.ps1
 "@
 Set-Content -Path (Join-Path $ToReleaseDir "DEPLOY.txt") -Value $deployNote -Encoding UTF8
 
@@ -106,11 +155,45 @@ ParallelTurnPvp $Configuration $buildStamp
 ParallelTurnPvp source=$ModsOutputDir
 DirectConnectIP $directConnectSummary
 BundleRoot=$BundleModsDir
+SecondaryModsRoot=$SecondaryModsRoot
+SecondaryDataRoot=$SecondaryDataRoot
 "@
 Set-Content -Path (Join-Path $ToReleaseDir "last_build.txt") -Value $buildSummary -Encoding UTF8
 
-Write-Host "[3/3] done" -ForegroundColor Green
+Write-Host "[3/4] secondary deploy $(if ($DeploySecondary) { '(enabled)' } else { '(skipped)' })"
+$secondaryDeployStatus = "skipped"
+if ($DeploySecondary) {
+    try {
+        Copy-DirectoryContents -SourceDir $ParallelTurnBundleDir -DestinationDir $SecondaryParallelTurnDir
+        if (Test-Path (Join-Path $BundleModsDir "DirectConnectIP")) {
+            Copy-DirectoryContents -SourceDir (Join-Path $BundleModsDir "DirectConnectIP") -DestinationDir $SecondaryDirectConnectDir
+        }
+
+        $secondaryDeployStatus = "success"
+    }
+    catch {
+        $secondaryDeployStatus = "failed"
+        $popupMessage = @"
+Failed to deploy ParallelTurnPvp to the secondary machine.
+
+Target:
+$SecondaryParallelTurnDir
+
+Most likely cause:
+The game is still open on the secondary machine and one or more mod files are locked.
+
+Close the game on the secondary machine, then rerun:
+.\build.ps1 -DeploySecondary
+"@
+        Show-SecondaryDeployBlockedPopup -Message $popupMessage
+        Write-Warning "Secondary deploy failed. Close the game on the secondary machine and rerun .\build.ps1 -DeploySecondary. Error: $($_.Exception.Message)"
+    }
+}
+
+Write-Host "[4/4] done" -ForegroundColor Green
 Write-Host "  Mods output : $ModsOutputDir"
 Write-Host "  Snapshot    : $ToReleaseDir"
 Write-Host "  Bundle mods : $BundleModsDir"
+Write-Host "  Secondary   : $secondaryDeployStatus ($SecondaryModsRoot)"
+Write-Host "  Remote logs : $SecondaryLogsDir"
 Write-Host "  Direct IP   : $directConnectSummary"

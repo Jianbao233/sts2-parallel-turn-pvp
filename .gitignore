@@ -4,3 +4,4 @@ src/ParallelTurnPvp/.godot/
 *.tmp
 *.log
 *.uid
+analysis/remote_logs/
