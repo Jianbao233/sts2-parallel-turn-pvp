@@ -20,6 +20,7 @@ public sealed class PvpAction
     public ulong ActorPlayerId { get; init; }
     public int RoundIndex { get; init; }
     public int Sequence { get; init; }
+    public uint? RuntimeActionId { get; init; }
     public PvpActionType ActionType { get; init; }
     public string ModelEntry { get; init; } = string.Empty;
     public PvpTargetRef Target { get; init; } = new();
@@ -103,6 +104,7 @@ public sealed class PvpRoundState
     public ulong FirstLockedPlayerId { get; set; }
     public bool FirstLockRewardGranted { get; set; }
     public PvpCombatSnapshot? PendingAuthoritativeSnapshot { get; set; }
+    public HashSet<string> RecordedActionKeys { get; } = new();
 }
 
 public sealed class PvpMatchRuntime
@@ -206,6 +208,13 @@ public sealed class PvpMatchRuntime
         var log = GetOrCreateLog(action.ActorPlayerId);
         if (log.Locked)
         {
+            return;
+        }
+
+        string dedupeKey = GetActionDedupeKey(action);
+        if (!CurrentRound.RecordedActionKeys.Add(dedupeKey))
+        {
+            Log.Info($"[ParallelTurnPvp] Skipped duplicate tracked action. round={CurrentRound.RoundIndex} player={action.ActorPlayerId} type={action.ActionType} runtimeActionId={action.RuntimeActionId?.ToString() ?? "-"} model={action.ModelEntry} target={action.Target.Kind}");
             return;
         }
 
@@ -432,6 +441,16 @@ public sealed class PvpMatchRuntime
         int liveRoundIndex = Math.Max(1, combatState.RoundNumber);
         StartRoundFromLiveState(combatState, liveRoundIndex);
         Log.Info($"[ParallelTurnPvp] Lazily initialized PvP round state from live combat. player={playerId} round={liveRoundIndex}");
+    }
+
+    private static string GetActionDedupeKey(PvpAction action)
+    {
+        if (action.RuntimeActionId != null)
+        {
+            return $"{action.ActorPlayerId}:{action.RuntimeActionId.Value}";
+        }
+
+        return $"{action.ActorPlayerId}:{action.RoundIndex}:{action.ActionType}:{action.ModelEntry}:{action.Target.Kind}:{action.Target.OwnerPlayerId}";
     }
 
     private PvpPlayerIntentState GetOrCreateIntentState(ulong playerId)

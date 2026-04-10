@@ -30,7 +30,7 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
                 result.Events.Add(new PvpResolvedEvent
                 {
                     Kind = PvpResolvedEventKind.ActionLogged,
-                    Text = $"Player {log.PlayerId} #{action.Sequence + 1}: {action.ActionType} {action.ModelEntry} -> {action.Target.Kind}"
+                    Text = $"Player {log.PlayerId} #{action.Sequence + 1}: {action.ActionType} {action.ModelEntry} -> {action.Target.Kind} [actionId={action.RuntimeActionId?.ToString() ?? "-"}]"
                 });
             }
         }

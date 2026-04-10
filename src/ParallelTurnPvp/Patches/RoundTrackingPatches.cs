@@ -45,6 +45,7 @@ public static class TrackPlayedCardsPatch
                 ActorPlayerId = __instance.Player.NetId,
                 RoundIndex = runtime.CurrentRound.RoundIndex,
                 Sequence = runtime.GetNextSequence(__instance.Player.NetId),
+                RuntimeActionId = __instance.Id,
                 ActionType = PvpActionType.PlayCard,
                 ModelEntry = __instance.CardModelId.Entry,
                 Target = ParallelTurnFrontlineHelper.CreateTargetRef(__instance.Player, target)
@@ -81,6 +82,7 @@ public static class TrackPotionUsagePatch
                 ActorPlayerId = __instance.Player.NetId,
                 RoundIndex = runtime.CurrentRound.RoundIndex,
                 Sequence = runtime.GetNextSequence(__instance.Player.NetId),
+                RuntimeActionId = __instance.Id,
                 ActionType = PvpActionType.UsePotion,
                 ModelEntry = modelEntry,
                 Target = ParallelTurnFrontlineHelper.CreateTargetRef(__instance.Player, target)
