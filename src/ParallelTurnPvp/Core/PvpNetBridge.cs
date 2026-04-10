@@ -1,4 +1,5 @@
-﻿using MegaCrit.Sts2.Core.Entities.Multiplayer;
+﻿using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
@@ -127,8 +128,23 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             return;
         }
 
-        runtime.CurrentRound.RoundIndex = message.roundIndex;
-        runtime.CurrentRound.Phase = (PvpMatchPhase)message.phase;
+        PvpMatchPhase phase = (PvpMatchPhase)message.phase;
+        if (RunManager.Instance.NetService.Type == NetGameType.Client &&
+            phase == PvpMatchPhase.Planning &&
+            CombatManager.Instance.DebugOnlyGetState() is CombatState combatState &&
+            combatState.RunState == runState &&
+            ShouldRefreshClientRound(runtime, message.roundIndex))
+        {
+            runtime.StartRoundFromLiveState(combatState, message.roundIndex);
+            runtime.CurrentRound.Phase = phase;
+            Log.Info($"[ParallelTurnPvp] Rebuilt client round state from authoritative planning message. round={message.roundIndex} snapshotVersion={message.snapshotVersion}");
+        }
+        else
+        {
+            runtime.CurrentRound.RoundIndex = message.roundIndex;
+            runtime.CurrentRound.Phase = phase;
+        }
+
         Log.Info($"[ParallelTurnPvp] Received authoritative round state. round={message.roundIndex} snapshotVersion={message.snapshotVersion} phase={(PvpMatchPhase)message.phase}");
     }
 
@@ -217,6 +233,22 @@ public sealed class PvpNetBridge : IPvpSyncBridge
                 Text = message.eventTexts[i] ?? string.Empty
             };
         }
+    }
+
+    private static bool ShouldRefreshClientRound(PvpMatchRuntime runtime, int incomingRoundIndex)
+    {
+        if (incomingRoundIndex > runtime.CurrentRound.RoundIndex)
+        {
+            return true;
+        }
+
+        if (incomingRoundIndex == runtime.CurrentRound.RoundIndex &&
+            (runtime.CurrentRound.HasResolved || runtime.CurrentRound.PublicIntentByPlayer.Values.Any(state => state.Slots.Count > 0 || state.Locked)))
+        {
+            return true;
+        }
+
+        return runtime.CurrentRound.RoundIndex == 0;
     }
 
     public static void ApplyLiveSnapshot(RunState runState, PvpCombatSnapshot snapshot)
