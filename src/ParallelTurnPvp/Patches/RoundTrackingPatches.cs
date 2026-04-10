@@ -105,7 +105,22 @@ public static class TrackEndTurnPatch
             if (RunManager.Instance.DebugOnlyGetState() is RunState runState)
             {
                 PvpNetBridge.EnsureRegistered();
-                PvpRuntimeRegistry.GetOrCreate(runState).LockPlayer(__instance.OwnerId);
+                var runtime = PvpRuntimeRegistry.GetOrCreate(runState);
+                runtime.AppendAction(new PvpAction
+                {
+                    ActorPlayerId = __instance.OwnerId,
+                    RoundIndex = runtime.CurrentRound.RoundIndex,
+                    Sequence = runtime.GetNextSequence(__instance.OwnerId),
+                    RuntimeActionId = __instance.Id,
+                    ActionType = PvpActionType.EndRound,
+                    ModelEntry = "END_TURN",
+                    Target = new PvpTargetRef
+                    {
+                        OwnerPlayerId = __instance.OwnerId,
+                        Kind = PvpTargetKind.None
+                    }
+                });
+                runtime.LockPlayer(__instance.OwnerId);
             }
         }
         catch (Exception ex)

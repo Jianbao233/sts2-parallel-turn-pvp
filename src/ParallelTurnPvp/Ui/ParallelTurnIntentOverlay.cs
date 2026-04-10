@@ -136,8 +136,10 @@ public partial class ParallelTurnIntentOverlay : Control
             "[Intent]",
             $"Start Energy: {view.RoundStartEnergy}",
             $"State: {(view.Locked ? "Locked" : "Planning")}{(view.IsFirstFinisher ? " | First lock" : string.Empty)}",
+            $"Your Actions: {view.ViewerActionCount}",
+            $"Opponent Submitted: {view.TargetActionCount}",
             $"Reveal: {(totalCount == 0 ? 0 : view.VisibleCount)}/{totalCount}",
-            $"Visible Budget: {view.RevealBudget}"
+            $"Rule: your actions = revealed opponent intents"
         };
 
         if (view.VisibleCount == 0 && view.HiddenCount == 0)

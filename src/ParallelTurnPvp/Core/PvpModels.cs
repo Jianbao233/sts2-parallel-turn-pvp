@@ -79,6 +79,8 @@ public sealed class PvpIntentView
     public bool Locked { get; init; }
     public bool IsFirstFinisher { get; init; }
     public int RevealBudget { get; init; }
+    public int ViewerActionCount { get; init; }
+    public int TargetActionCount { get; init; }
     public int VisibleCount { get; init; }
     public int HiddenCount { get; init; }
     public IReadOnlyList<PvpPublicIntentSlot> VisibleSlots { get; init; } = Array.Empty<PvpPublicIntentSlot>();
@@ -365,8 +367,9 @@ public sealed class PvpMatchRuntime
             return null;
         }
 
-        int revealBudget = GetRevealBudget(viewerId);
-        int visibleCount = Math.Min(revealBudget, state.Slots.Count);
+        int viewerActionCount = GetRevealActionCount(viewerId);
+        int targetActionCount = GetRevealActionCount(targetId);
+        int visibleCount = Math.Min(viewerActionCount, state.Slots.Count);
         int hiddenCount = Math.Max(state.Slots.Count - visibleCount, 0);
         return new PvpIntentView
         {
@@ -376,7 +379,9 @@ public sealed class PvpMatchRuntime
             RoundStartEnergy = state.RoundStartEnergy,
             Locked = state.Locked,
             IsFirstFinisher = state.IsFirstFinisher,
-            RevealBudget = revealBudget,
+            RevealBudget = viewerActionCount,
+            ViewerActionCount = viewerActionCount,
+            TargetActionCount = targetActionCount,
             VisibleCount = visibleCount,
             HiddenCount = hiddenCount,
             VisibleSlots = state.Slots.Take(visibleCount).ToList()
@@ -496,20 +501,21 @@ public sealed class PvpMatchRuntime
                     continue;
                 }
 
-                int revealBudget = GetRevealBudget(viewerId);
-                int visibleCount = Math.Min(revealBudget, state.Slots.Count);
+                int viewerActionCount = GetRevealActionCount(viewerId);
+                int targetActionCount = GetRevealActionCount(targetId);
+                int visibleCount = Math.Min(viewerActionCount, state.Slots.Count);
                 string visible = visibleCount == 0
                     ? "-"
                     : string.Join(", ", state.Slots.Take(visibleCount).Select(slot => $"{slot.Category}/{slot.TargetSide}"));
                 int hiddenCount = Math.Max(state.Slots.Count - visibleCount, 0);
-                Log.Info($"[ParallelTurnPvp] IntentView viewer={viewerId} target={targetId} startEnergy={state.RoundStartEnergy} locked={state.Locked} firstFinisher={state.IsFirstFinisher} reveal={visibleCount}/{state.Slots.Count} visible=[{visible}] hidden={hiddenCount} changed={changedPlayerId}");
+                Log.Info($"[ParallelTurnPvp] IntentView viewer={viewerId} target={targetId} startEnergy={state.RoundStartEnergy} locked={state.Locked} firstFinisher={state.IsFirstFinisher} viewerActions={viewerActionCount} targetActions={targetActionCount} reveal={visibleCount}/{state.Slots.Count} visible=[{visible}] hidden={hiddenCount} changed={changedPlayerId}");
             }
         }
     }
 
-    private int GetRevealBudget(ulong viewerId)
+    private int GetRevealActionCount(ulong playerId)
     {
-        return CurrentRound.LogsByPlayer.TryGetValue(viewerId, out PvpActionLog? log)
+        return CurrentRound.LogsByPlayer.TryGetValue(playerId, out PvpActionLog? log)
             ? log.Actions.Count(action => action.ActionType is PvpActionType.PlayCard or PvpActionType.UsePotion)
             : 0;
     }
