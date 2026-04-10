@@ -52,6 +52,9 @@ public enum PvpIntentTargetSide
 public enum PvpResolvedEventKind
 {
     RoundStarted,
+    ExecutionPlanBuilt,
+    PhaseStarted,
+    ActionScheduled,
     ActionLogged,
     PlayerLocked,
     PlayerUnlocked,
@@ -59,4 +62,15 @@ public enum PvpResolvedEventKind
     FrontlineStateChanged,
     RoundResolved,
     MatchEnded
+}
+
+public enum PvpResolutionPhase
+{
+    Summon,
+    Buff,
+    Debuff,
+    Recover,
+    Resource,
+    Attack,
+    EndRound
 }

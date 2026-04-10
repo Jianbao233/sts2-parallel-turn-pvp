@@ -15,6 +15,11 @@ public interface IPvpPlanningCompiler
     PvpRoundSubmission BuildSubmission(int roundIndex, PvpActionLog log, PvpPlayerIntentState? intentState);
 }
 
+public interface IPvpExecutionPlanner
+{
+    PvpRoundExecutionPlan BuildPlan(int roundIndex, IReadOnlyList<PvpRoundSubmission> submissions);
+}
+
 public interface IPvpSyncBridge
 {
     void BroadcastRoundState(PvpRoundState state);

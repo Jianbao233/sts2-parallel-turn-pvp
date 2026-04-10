@@ -91,7 +91,25 @@ public sealed class PvpRoundResult
     public int RoundIndex { get; init; }
     public PvpCombatSnapshot InitialSnapshot { get; init; } = new();
     public PvpCombatSnapshot FinalSnapshot { get; init; } = new();
+    public PvpRoundExecutionPlan? ExecutionPlan { get; set; }
     public List<PvpResolvedEvent> Events { get; } = new();
+}
+
+public sealed class PvpExecutionStep
+{
+    public PvpResolutionPhase Phase { get; init; }
+    public ulong PlayerId { get; init; }
+    public int Sequence { get; init; }
+    public PvpActionType ActionType { get; init; }
+    public string ModelEntry { get; init; } = string.Empty;
+    public PvpTargetRef Target { get; init; } = new();
+    public uint? RuntimeActionId { get; init; }
+}
+
+public sealed class PvpRoundExecutionPlan
+{
+    public int RoundIndex { get; init; }
+    public List<PvpExecutionStep> Steps { get; } = new();
 }
 
 public sealed class PvpPlannedAction

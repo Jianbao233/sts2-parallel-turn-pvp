@@ -33,3 +33,5 @@
 - fixed client-side intent overlay not updating after same-round actions by preventing same-round planning-frame rebuilds and removing overly strict snapshot-version gating
 
 - moved round summary generation onto planning submissions so resolver input now follows the planning layer instead of raw action logs
+
+- added PvpExecutionPlanner and RoundExecutionPlan so resolver now groups planned actions into execution phases before generating summaries

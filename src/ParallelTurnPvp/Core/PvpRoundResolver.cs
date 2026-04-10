@@ -2,6 +2,8 @@ namespace ParallelTurnPvp.Core;
 
 public sealed class PvpRoundResolver : IPvpRoundResolver
 {
+    private readonly IPvpExecutionPlanner _planner = new PvpExecutionPlanner();
+
     public PvpRoundResult Resolve(PvpCombatSnapshot initialSnapshot, IReadOnlyList<PvpRoundSubmission> submissions, PvpCombatSnapshot finalSnapshot)
     {
         var result = new PvpRoundResult
@@ -10,11 +12,18 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
             InitialSnapshot = initialSnapshot,
             FinalSnapshot = finalSnapshot
         };
+        PvpRoundExecutionPlan plan = _planner.BuildPlan(initialSnapshot.RoundIndex, submissions);
+        result.ExecutionPlan = plan;
 
         result.Events.Add(new PvpResolvedEvent
         {
             Kind = PvpResolvedEventKind.RoundResolved,
             Text = $"Resolved round {initialSnapshot.RoundIndex} with {submissions.Sum(submission => submission.Actions.Count)} planned actions."
+        });
+        result.Events.Add(new PvpResolvedEvent
+        {
+            Kind = PvpResolvedEventKind.ExecutionPlanBuilt,
+            Text = $"Built execution plan for round {initialSnapshot.RoundIndex}: phases={plan.Steps.Select(step => step.Phase).Distinct().Count()}, steps={plan.Steps.Count}."
         });
 
         foreach (PvpRoundSubmission submission in submissions.OrderBy(submission => submission.PlayerId))
@@ -33,13 +42,22 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
                     Text = $"Player {submission.PlayerId} locked round {submission.RoundIndex}{(submission.IsFirstFinisher ? " first" : string.Empty)}."
                 });
             }
+        }
 
-            foreach (PvpPlannedAction action in submission.Actions.OrderBy(action => action.Sequence))
+        foreach (IGrouping<PvpResolutionPhase, PvpExecutionStep> phaseGroup in plan.Steps.GroupBy(step => step.Phase))
+        {
+            result.Events.Add(new PvpResolvedEvent
+            {
+                Kind = PvpResolvedEventKind.PhaseStarted,
+                Text = $"Phase {phaseGroup.Key} scheduled {phaseGroup.Count()} step(s)."
+            });
+
+            foreach (PvpExecutionStep step in phaseGroup)
             {
                 result.Events.Add(new PvpResolvedEvent
                 {
-                    Kind = PvpResolvedEventKind.ActionLogged,
-                    Text = $"Player {submission.PlayerId} #{action.Sequence + 1}: {action.ActionType} {action.ModelEntry} -> {action.Target.Kind} [actionId={action.RuntimeActionId?.ToString() ?? "-"}]"
+                    Kind = PvpResolvedEventKind.ActionScheduled,
+                    Text = $"Phase {step.Phase} player {step.PlayerId} #{step.Sequence + 1}: {step.ActionType} {step.ModelEntry} -> {step.Target.Kind} [actionId={step.RuntimeActionId?.ToString() ?? "-"}]"
                 });
             }
         }
