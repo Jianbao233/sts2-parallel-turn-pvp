@@ -3,3 +3,4 @@ src/ParallelTurnPvp/.godot/
 *.user
 *.tmp
 *.log
+*.uid
