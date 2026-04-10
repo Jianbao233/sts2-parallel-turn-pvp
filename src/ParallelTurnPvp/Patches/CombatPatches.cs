@@ -88,7 +88,7 @@ public static class ParallelTurnSwitchSidesPatch
         Player? rewardedPlayer = runtime.ApplyFirstLockRewardIfPending();
         if (rewardedPlayer != null)
         {
-            Log.Info($"[ParallelTurnPvp] Pre-resolve early lock reward applied to player {rewardedPlayer.NetId} for live round {combatState.RoundNumber}.");
+            Log.Info($"[ParallelTurnPvp] Pre-resolve early lock reward queued for player {rewardedPlayer.NetId} for live round {combatState.RoundNumber}.");
         }
 
         PvpRoundResult result = runtime.ResolveLiveRound(combatState);
