@@ -83,6 +83,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
         }
 
         var orderedHeroes = result.FinalSnapshot.Heroes.OrderBy(entry => entry.Key).Select(entry => entry.Value).ToList();
+        var orderedFrontlines = result.FinalSnapshot.Frontlines.OrderBy(entry => entry.Key).Select(entry => entry.Value).ToList();
         RunManager.Instance.NetService.SendMessage(new PvpRoundResultMessage
         {
             roundIndex = result.RoundIndex,
@@ -90,7 +91,15 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             hero1Hp = orderedHeroes.ElementAtOrDefault(0)?.CurrentHp ?? 0,
             hero2Hp = orderedHeroes.ElementAtOrDefault(1)?.CurrentHp ?? 0,
             hero1Block = orderedHeroes.ElementAtOrDefault(0)?.Block ?? 0,
-            hero2Block = orderedHeroes.ElementAtOrDefault(1)?.Block ?? 0
+            hero2Block = orderedHeroes.ElementAtOrDefault(1)?.Block ?? 0,
+            frontline1Exists = orderedFrontlines.ElementAtOrDefault(0)?.Exists ?? false,
+            frontline2Exists = orderedFrontlines.ElementAtOrDefault(1)?.Exists ?? false,
+            frontline1Hp = orderedFrontlines.ElementAtOrDefault(0)?.CurrentHp ?? 0,
+            frontline2Hp = orderedFrontlines.ElementAtOrDefault(1)?.CurrentHp ?? 0,
+            frontline1Block = orderedFrontlines.ElementAtOrDefault(0)?.Block ?? 0,
+            frontline2Block = orderedFrontlines.ElementAtOrDefault(1)?.Block ?? 0,
+            eventKinds = result.Events.Select(resolvedEvent => (int)resolvedEvent.Kind).ToList(),
+            eventTexts = result.Events.Select(resolvedEvent => resolvedEvent.Text).ToList()
         });
     }
 
@@ -139,14 +148,20 @@ public sealed class PvpNetBridge : IPvpSyncBridge
 
         var initialSnapshot = runtime.CurrentRound.SnapshotAtRoundStart;
         var finalSnapshot = CreateSnapshotFromMessage(initialSnapshot, message);
-        runtime.ApplyAuthoritativeResult(new PvpRoundResult
+        var authoritativeResult = new PvpRoundResult
         {
             RoundIndex = message.roundIndex,
             InitialSnapshot = initialSnapshot,
             FinalSnapshot = finalSnapshot
-        });
+        };
+        foreach (PvpResolvedEvent resolvedEvent in CreateResolvedEvents(message))
+        {
+            authoritativeResult.Events.Add(resolvedEvent);
+        }
 
-        Log.Info($"[ParallelTurnPvp] Received authoritative round result. round={message.roundIndex} snapshotVersion={message.snapshotVersion} hero1Hp={message.hero1Hp} hero2Hp={message.hero2Hp} liveApply=disabled");
+        runtime.ApplyAuthoritativeResult(authoritativeResult);
+
+        Log.Info($"[ParallelTurnPvp] Received authoritative round result. round={message.roundIndex} snapshotVersion={message.snapshotVersion} hero1Hp={message.hero1Hp} hero2Hp={message.hero2Hp} events={message.eventTexts?.Count ?? 0} liveApply=disabled");
     }
 
     private static PvpCombatSnapshot CreateSnapshotFromMessage(PvpCombatSnapshot initialSnapshot, PvpRoundResultMessage message)
@@ -175,10 +190,33 @@ public sealed class PvpNetBridge : IPvpSyncBridge
 
         foreach (var frontline in initialSnapshot.Frontlines)
         {
-            snapshot.Frontlines[frontline.Key] = frontline.Value;
+            int orderedIndex = orderedHeroes.FindIndex(entry => entry.Key == frontline.Key);
+            bool exists = orderedIndex == 0 ? message.frontline1Exists : orderedIndex == 1 ? message.frontline2Exists : frontline.Value.Exists;
+            int hp = orderedIndex == 0 ? message.frontline1Hp : orderedIndex == 1 ? message.frontline2Hp : frontline.Value.CurrentHp;
+            int block = orderedIndex == 0 ? message.frontline1Block : orderedIndex == 1 ? message.frontline2Block : frontline.Value.Block;
+            snapshot.Frontlines[frontline.Key] = new PvpCreatureSnapshot
+            {
+                Exists = exists,
+                CurrentHp = hp,
+                MaxHp = frontline.Value.MaxHp,
+                Block = block
+            };
         }
 
         return snapshot;
+    }
+
+    private static IEnumerable<PvpResolvedEvent> CreateResolvedEvents(PvpRoundResultMessage message)
+    {
+        int eventCount = Math.Min(message.eventKinds.Count, message.eventTexts.Count);
+        for (int i = 0; i < eventCount; i++)
+        {
+            yield return new PvpResolvedEvent
+            {
+                Kind = (PvpResolvedEventKind)message.eventKinds[i],
+                Text = message.eventTexts[i] ?? string.Empty
+            };
+        }
     }
 
     public static void ApplyLiveSnapshot(RunState runState, PvpCombatSnapshot snapshot)
