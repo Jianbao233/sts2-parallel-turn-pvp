@@ -99,3 +99,101 @@ public struct PvpRoundResultMessage : INetMessage
         }
     }
 }
+
+public struct PvpPlannedActionPacket : IPacketSerializable
+{
+    public int sequence;
+    public bool hasRuntimeActionId;
+    public uint runtimeActionId;
+    public int actionType;
+    public string modelEntry;
+    public ulong targetOwnerPlayerId;
+    public int targetKind;
+
+    public void Serialize(PacketWriter writer)
+    {
+        writer.WriteInt(sequence);
+        writer.WriteBool(hasRuntimeActionId);
+        if (hasRuntimeActionId)
+        {
+            writer.WriteUInt(runtimeActionId);
+        }
+
+        writer.WriteInt(actionType);
+        writer.WriteString(modelEntry ?? string.Empty);
+        writer.WriteULong(targetOwnerPlayerId);
+        writer.WriteInt(targetKind);
+    }
+
+    public void Deserialize(PacketReader reader)
+    {
+        sequence = reader.ReadInt();
+        hasRuntimeActionId = reader.ReadBool();
+        runtimeActionId = hasRuntimeActionId ? reader.ReadUInt() : 0U;
+        actionType = reader.ReadInt();
+        modelEntry = reader.ReadString();
+        targetOwnerPlayerId = reader.ReadULong();
+        targetKind = reader.ReadInt();
+    }
+}
+
+public struct PvpRoundSubmissionPacket : IPacketSerializable
+{
+    public int roundIndex;
+    public ulong playerId;
+    public int roundStartEnergy;
+    public bool locked;
+    public bool isFirstFinisher;
+    public List<PvpPlannedActionPacket> actions;
+
+    public void Serialize(PacketWriter writer)
+    {
+        writer.WriteInt(roundIndex);
+        writer.WriteULong(playerId);
+        writer.WriteInt(roundStartEnergy);
+        writer.WriteBool(locked);
+        writer.WriteBool(isFirstFinisher);
+        writer.WriteList(actions ?? new List<PvpPlannedActionPacket>());
+    }
+
+    public void Deserialize(PacketReader reader)
+    {
+        roundIndex = reader.ReadInt();
+        playerId = reader.ReadULong();
+        roundStartEnergy = reader.ReadInt();
+        locked = reader.ReadBool();
+        isFirstFinisher = reader.ReadBool();
+        actions = reader.ReadList<PvpPlannedActionPacket>();
+    }
+}
+
+public struct PvpPlanningFrameMessage : INetMessage
+{
+    public int roundIndex;
+    public int snapshotVersion;
+    public int phase;
+    public int revision;
+    public List<PvpRoundSubmissionPacket>? submissions;
+
+    public bool ShouldBroadcast => true;
+    public NetTransferMode Mode => NetTransferMode.Reliable;
+    public LogLevel LogLevel => LogLevel.Info;
+
+    public void Serialize(PacketWriter writer)
+    {
+        writer.WriteInt(roundIndex);
+        writer.WriteInt(snapshotVersion);
+        writer.WriteInt(phase);
+        writer.WriteInt(revision);
+        writer.WriteList(submissions ?? new List<PvpRoundSubmissionPacket>());
+    }
+
+    public void Deserialize(PacketReader reader)
+    {
+        roundIndex = reader.ReadInt();
+        snapshotVersion = reader.ReadInt();
+        phase = reader.ReadInt();
+        revision = reader.ReadInt();
+        submissions = reader.ReadList<PvpRoundSubmissionPacket>();
+    }
+}

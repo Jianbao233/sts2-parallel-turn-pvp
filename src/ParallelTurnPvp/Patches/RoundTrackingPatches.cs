@@ -50,6 +50,7 @@ public static class TrackPlayedCardsPatch
                 ModelEntry = __instance.CardModelId.Entry,
                 Target = ParallelTurnFrontlineHelper.CreateTargetRef(__instance.Player, target)
             });
+            new PvpNetBridge().BroadcastPlanningFrame(runtime.BuildPlanningFrame());
         }
         catch (Exception ex)
         {
@@ -87,6 +88,7 @@ public static class TrackPotionUsagePatch
                 ModelEntry = modelEntry,
                 Target = ParallelTurnFrontlineHelper.CreateTargetRef(__instance.Player, target)
             });
+            new PvpNetBridge().BroadcastPlanningFrame(runtime.BuildPlanningFrame());
         }
         catch (Exception ex)
         {
@@ -121,6 +123,7 @@ public static class TrackEndTurnPatch
                     }
                 });
                 runtime.LockPlayer(__instance.OwnerId);
+                new PvpNetBridge().BroadcastPlanningFrame(runtime.BuildPlanningFrame());
             }
         }
         catch (Exception ex)
@@ -151,7 +154,9 @@ public static class TrackUndoEndTurnPatch
             if (RunManager.Instance.DebugOnlyGetState() is RunState runState && !runState.Modifiers.OfType<Models.ParallelTurnPvpDebugModifier>().Any())
             {
                 PvpNetBridge.EnsureRegistered();
-                PvpRuntimeRegistry.GetOrCreate(runState).UnlockPlayer(__instance.OwnerId);
+                var runtime = PvpRuntimeRegistry.GetOrCreate(runState);
+                runtime.UnlockPlayer(__instance.OwnerId);
+                new PvpNetBridge().BroadcastPlanningFrame(runtime.BuildPlanningFrame());
             }
         }
         catch (Exception ex)

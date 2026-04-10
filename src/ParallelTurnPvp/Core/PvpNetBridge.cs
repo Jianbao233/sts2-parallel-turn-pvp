@@ -26,6 +26,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
         }
 
         netService.RegisterMessageHandler<PvpRoundStateMessage>(HandleRoundStateMessage);
+        netService.RegisterMessageHandler<PvpPlanningFrameMessage>(HandlePlanningFrameMessage);
         netService.RegisterMessageHandler<PvpRoundResultMessage>(HandleRoundResultMessage);
         _registeredService = netService;
         Log.Info($"[ParallelTurnPvp] Registered PvP message handlers. netType={netService.Type} inProgress={runManager.IsInProgress}");
@@ -58,6 +59,38 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             roundIndex = state.RoundIndex,
             snapshotVersion = state.SnapshotAtRoundStart.SnapshotVersion,
             phase = (int)state.Phase
+        });
+    }
+
+    public void BroadcastPlanningFrame(PvpPlanningFrame frame)
+    {
+        if (!CanBroadcast())
+        {
+            return;
+        }
+
+        if (frame.RoundIndex <= 0 || frame.SnapshotVersion <= 0 || frame.Revision <= 0)
+        {
+            return;
+        }
+
+        if (RunManager.Instance.DebugOnlyGetState() is RunState runState)
+        {
+            var runtime = PvpRuntimeRegistry.GetOrCreate(runState);
+            if (!runtime.TryMarkPlanningFrameBroadcast(frame))
+            {
+                Log.Info($"[ParallelTurnPvp] Skipped duplicate planning frame broadcast. round={frame.RoundIndex} snapshotVersion={frame.SnapshotVersion} revision={frame.Revision}");
+                return;
+            }
+        }
+
+        RunManager.Instance.NetService.SendMessage(new PvpPlanningFrameMessage
+        {
+            roundIndex = frame.RoundIndex,
+            snapshotVersion = frame.SnapshotVersion,
+            phase = (int)frame.Phase,
+            revision = frame.Revision,
+            submissions = frame.Submissions.Select(CreateSubmissionPacket).ToList()
         });
     }
 
@@ -148,6 +181,44 @@ public sealed class PvpNetBridge : IPvpSyncBridge
         Log.Info($"[ParallelTurnPvp] Received authoritative round state. round={message.roundIndex} snapshotVersion={message.snapshotVersion} phase={(PvpMatchPhase)message.phase}");
     }
 
+    private static void HandlePlanningFrameMessage(PvpPlanningFrameMessage message, ulong _)
+    {
+        if (message.roundIndex <= 0 || message.snapshotVersion <= 0 || message.revision <= 0 || RunManager.Instance.DebugOnlyGetState() is not RunState runState)
+        {
+            return;
+        }
+
+        var runtime = PvpRuntimeRegistry.GetOrCreate(runState);
+        if (!runtime.TryMarkPlanningFrameReceived(message.roundIndex, message.revision))
+        {
+            Log.Info($"[ParallelTurnPvp] Ignored duplicate/stale authoritative planning frame. round={message.roundIndex} snapshotVersion={message.snapshotVersion} revision={message.revision}");
+            return;
+        }
+
+        if (RunManager.Instance.NetService.Type == NetGameType.Client &&
+            CombatManager.Instance.DebugOnlyGetState() is CombatState combatState &&
+            combatState.RunState == runState &&
+            ShouldRefreshClientRound(runtime, message.roundIndex))
+        {
+            runtime.StartRoundFromLiveState(combatState, message.roundIndex);
+        }
+
+        var frame = new PvpPlanningFrame
+        {
+            RoundIndex = message.roundIndex,
+            SnapshotVersion = message.snapshotVersion,
+            Phase = (PvpMatchPhase)message.phase,
+            Revision = message.revision
+        };
+        foreach (PvpRoundSubmissionPacket submissionPacket in message.submissions ?? new List<PvpRoundSubmissionPacket>())
+        {
+            frame.Submissions.Add(CreateSubmission(submissionPacket));
+        }
+
+        runtime.ApplyAuthoritativePlanningFrame(frame);
+        Log.Info($"[ParallelTurnPvp] Received authoritative planning frame. round={message.roundIndex} snapshotVersion={message.snapshotVersion} revision={message.revision} submissions={frame.Submissions.Count}");
+    }
+
     private static void HandleRoundResultMessage(PvpRoundResultMessage message, ulong _)
     {
         if (message.roundIndex <= 0 || message.snapshotVersion <= 0 || RunManager.Instance.DebugOnlyGetState() is not RunState runState)
@@ -224,15 +295,69 @@ public sealed class PvpNetBridge : IPvpSyncBridge
 
     private static IEnumerable<PvpResolvedEvent> CreateResolvedEvents(PvpRoundResultMessage message)
     {
-        int eventCount = Math.Min(message.eventKinds.Count, message.eventTexts.Count);
+        List<int> eventKinds = message.eventKinds ?? new List<int>();
+        List<string> eventTexts = message.eventTexts ?? new List<string>();
+        int eventCount = Math.Min(eventKinds.Count, eventTexts.Count);
         for (int i = 0; i < eventCount; i++)
         {
             yield return new PvpResolvedEvent
             {
-                Kind = (PvpResolvedEventKind)message.eventKinds[i],
-                Text = message.eventTexts[i] ?? string.Empty
+                Kind = (PvpResolvedEventKind)eventKinds[i],
+                Text = eventTexts[i] ?? string.Empty
             };
         }
+    }
+
+    private static PvpRoundSubmissionPacket CreateSubmissionPacket(PvpRoundSubmission submission)
+    {
+        return new PvpRoundSubmissionPacket
+        {
+            roundIndex = submission.RoundIndex,
+            playerId = submission.PlayerId,
+            roundStartEnergy = submission.RoundStartEnergy,
+            locked = submission.Locked,
+            isFirstFinisher = submission.IsFirstFinisher,
+            actions = submission.Actions.Select(action => new PvpPlannedActionPacket
+            {
+                sequence = action.Sequence,
+                hasRuntimeActionId = action.RuntimeActionId != null,
+                runtimeActionId = action.RuntimeActionId ?? 0U,
+                actionType = (int)action.ActionType,
+                modelEntry = action.ModelEntry,
+                targetOwnerPlayerId = action.Target.OwnerPlayerId,
+                targetKind = (int)action.Target.Kind
+            }).ToList()
+        };
+    }
+
+    private static PvpRoundSubmission CreateSubmission(PvpRoundSubmissionPacket packet)
+    {
+        var submission = new PvpRoundSubmission
+        {
+            RoundIndex = packet.roundIndex,
+            PlayerId = packet.playerId,
+            RoundStartEnergy = packet.roundStartEnergy,
+            Locked = packet.locked,
+            IsFirstFinisher = packet.isFirstFinisher
+        };
+
+        foreach (PvpPlannedActionPacket actionPacket in packet.actions ?? new List<PvpPlannedActionPacket>())
+        {
+            submission.Actions.Add(new PvpPlannedAction
+            {
+                Sequence = actionPacket.sequence,
+                RuntimeActionId = actionPacket.hasRuntimeActionId ? actionPacket.runtimeActionId : null,
+                ActionType = (PvpActionType)actionPacket.actionType,
+                ModelEntry = actionPacket.modelEntry ?? string.Empty,
+                Target = new PvpTargetRef
+                {
+                    OwnerPlayerId = actionPacket.targetOwnerPlayerId,
+                    Kind = (PvpTargetKind)actionPacket.targetKind
+                }
+            });
+        }
+
+        return submission;
     }
 
     private static bool ShouldRefreshClientRound(PvpMatchRuntime runtime, int incomingRoundIndex)

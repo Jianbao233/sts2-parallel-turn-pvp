@@ -116,7 +116,9 @@ public sealed class PvpRoundSubmission
 public sealed class PvpPlanningFrame
 {
     public int RoundIndex { get; init; }
+    public int SnapshotVersion { get; init; }
     public PvpMatchPhase Phase { get; init; }
+    public int Revision { get; init; }
     public List<PvpRoundSubmission> Submissions { get; } = new();
 }
 
@@ -124,6 +126,7 @@ public sealed class PvpRoundState
 {
     public int RoundIndex { get; set; }
     public PvpMatchPhase Phase { get; set; }
+    public int PlanningRevision { get; set; }
     public PvpCombatSnapshot SnapshotAtRoundStart { get; set; } = new();
     public Dictionary<ulong, PvpActionLog> LogsByPlayer { get; } = new();
     public Dictionary<ulong, PvpPlayerIntentState> PublicIntentByPlayer { get; } = new();
@@ -154,20 +157,30 @@ public sealed class PvpMatchRuntime
     public RunState RunState { get; }
     public PvpRoundState CurrentRound { get; private set; } = new();
     public PvpRoundResult? LastAuthoritativeResult { get; private set; }
+    public PvpPlanningFrame? LastAuthoritativePlanningFrame { get; private set; }
     public int SnapshotVersion { get; private set; }
     public int LastReceivedRoundStateVersion { get; private set; }
     public int LastReceivedRoundResultVersion { get; private set; }
     public int LastBroadcastRoundStateVersion { get; private set; }
     public int LastBroadcastRoundResultVersion { get; private set; }
+    public int LastReceivedPlanningRoundIndex { get; private set; }
+    public int LastReceivedPlanningRevision { get; private set; }
+    public int LastBroadcastPlanningRoundIndex { get; private set; }
+    public int LastBroadcastPlanningRevision { get; private set; }
 
     public void BeginCombat(CombatState combatState)
     {
         SnapshotVersion = 0;
         LastAuthoritativeResult = null;
+        LastAuthoritativePlanningFrame = null;
         LastReceivedRoundStateVersion = 0;
         LastReceivedRoundResultVersion = 0;
         LastBroadcastRoundStateVersion = 0;
         LastBroadcastRoundResultVersion = 0;
+        LastReceivedPlanningRoundIndex = 0;
+        LastReceivedPlanningRevision = 0;
+        LastBroadcastPlanningRoundIndex = 0;
+        LastBroadcastPlanningRevision = 0;
         StartRoundFromLiveState(combatState, 1);
     }
 
@@ -179,6 +192,7 @@ public sealed class PvpMatchRuntime
         {
             RoundIndex = roundIndex,
             Phase = PvpMatchPhase.Planning,
+            PlanningRevision = 1,
             SnapshotAtRoundStart = snapshot
         };
 
@@ -194,6 +208,7 @@ public sealed class PvpMatchRuntime
 
         Log.Info($"[ParallelTurnPvp] StartRoundFromLiveState round={roundIndex} logs=[{string.Join(", ", CurrentRound.LogsByPlayer.Keys.OrderBy(id => id))}] intents=[{string.Join(", ", CurrentRound.PublicIntentByPlayer.OrderBy(entry => entry.Key).Select(entry => $"{entry.Key}:energy={entry.Value.RoundStartEnergy}"))}]");
         _missingLogWarnings.Clear();
+        RefreshPlanningFrameCache();
     }
 
     public bool CanResolveRound(int liveRoundIndex)
@@ -250,6 +265,8 @@ public sealed class PvpMatchRuntime
 
         log.Actions.Add(action);
         UpdateIntentState(action);
+        BumpPlanningRevision();
+        RefreshPlanningFrameCache();
         LogIntentVisibility(action.ActorPlayerId);
         LogPlanningSubmission(action.ActorPlayerId);
     }
@@ -271,6 +288,8 @@ public sealed class PvpMatchRuntime
         CurrentRound.Phase = CurrentRound.LogsByPlayer.Values.All(l => l.Locked)
             ? PvpMatchPhase.Resolving
             : PvpMatchPhase.LockedWaitingPeer;
+        BumpPlanningRevision();
+        RefreshPlanningFrameCache();
         LogIntentVisibility(playerId);
         LogPlanningSubmission(playerId);
     }
@@ -281,6 +300,8 @@ public sealed class PvpMatchRuntime
         log.Locked = false;
         GetOrCreateIntentState(playerId).Locked = false;
         CurrentRound.Phase = PvpMatchPhase.Planning;
+        BumpPlanningRevision();
+        RefreshPlanningFrameCache();
     }
 
     public Player? ApplyFirstLockRewardIfPending()
@@ -332,6 +353,20 @@ public sealed class PvpMatchRuntime
         CurrentRound.LastResult = result;
         CurrentRound.HasResolved = true;
         CurrentRound.Phase = PvpMatchPhase.RoundEnd;
+    }
+
+    public void ApplyAuthoritativePlanningFrame(PvpPlanningFrame frame)
+    {
+        LastAuthoritativePlanningFrame = frame;
+        if (frame.RoundIndex > CurrentRound.RoundIndex)
+        {
+            CurrentRound.RoundIndex = frame.RoundIndex;
+        }
+
+        if (frame.RoundIndex == CurrentRound.RoundIndex)
+        {
+            CurrentRound.Phase = frame.Phase;
+        }
     }
 
     public void QueueAuthoritativeSnapshot(PvpCombatSnapshot snapshot)
@@ -390,9 +425,53 @@ public sealed class PvpMatchRuntime
         return true;
     }
 
+    public bool TryMarkPlanningFrameBroadcast(PvpPlanningFrame frame)
+    {
+        if (frame.RoundIndex < LastBroadcastPlanningRoundIndex)
+        {
+            return false;
+        }
+
+        if (frame.RoundIndex == LastBroadcastPlanningRoundIndex && frame.Revision <= LastBroadcastPlanningRevision)
+        {
+            return false;
+        }
+
+        LastBroadcastPlanningRoundIndex = frame.RoundIndex;
+        LastBroadcastPlanningRevision = frame.Revision;
+        return true;
+    }
+
+    public bool TryMarkPlanningFrameReceived(int roundIndex, int revision)
+    {
+        if (roundIndex < LastReceivedPlanningRoundIndex)
+        {
+            return false;
+        }
+
+        if (roundIndex == LastReceivedPlanningRoundIndex && revision <= LastReceivedPlanningRevision)
+        {
+            return false;
+        }
+
+        LastReceivedPlanningRoundIndex = roundIndex;
+        LastReceivedPlanningRevision = revision;
+        return true;
+    }
+
     public PvpIntentView? GetIntentView(ulong viewerId, ulong targetId)
     {
-        if (!_playersById.ContainsKey(viewerId) || !CurrentRound.PublicIntentByPlayer.TryGetValue(targetId, out PvpPlayerIntentState? state))
+        if (!_playersById.ContainsKey(viewerId))
+        {
+            return null;
+        }
+
+        if (TryBuildAuthoritativeIntentView(viewerId, targetId, out PvpIntentView? authoritativeView))
+        {
+            return authoritativeView;
+        }
+
+        if (!CurrentRound.PublicIntentByPlayer.TryGetValue(targetId, out PvpPlayerIntentState? state))
         {
             return null;
         }
@@ -434,7 +513,9 @@ public sealed class PvpMatchRuntime
         var frame = new PvpPlanningFrame
         {
             RoundIndex = CurrentRound.RoundIndex,
-            Phase = CurrentRound.Phase
+            SnapshotVersion = CurrentRound.SnapshotAtRoundStart.SnapshotVersion,
+            Phase = CurrentRound.Phase,
+            Revision = CurrentRound.PlanningRevision
         };
 
         foreach (ulong playerId in CurrentRound.LogsByPlayer.Keys.OrderBy(id => id))
@@ -588,11 +669,102 @@ public sealed class PvpMatchRuntime
         Log.Info($"[ParallelTurnPvp] PlanningSubmission round={submission.RoundIndex} player={submission.PlayerId} energy={submission.RoundStartEnergy} locked={submission.Locked} first={submission.IsFirstFinisher} actions={submission.Actions.Count} [{actions}]");
     }
 
+    private void BumpPlanningRevision()
+    {
+        CurrentRound.PlanningRevision = Math.Max(CurrentRound.PlanningRevision + 1, 1);
+    }
+
+    private void RefreshPlanningFrameCache()
+    {
+        if (CurrentRound.RoundIndex <= 0 || CurrentRound.SnapshotAtRoundStart.SnapshotVersion <= 0)
+        {
+            return;
+        }
+
+        LastAuthoritativePlanningFrame = BuildPlanningFrame();
+    }
+
     private int GetRevealActionCount(ulong playerId)
     {
         return CurrentRound.LogsByPlayer.TryGetValue(playerId, out PvpActionLog? log)
             ? log.Actions.Count(action => action.ActionType is PvpActionType.PlayCard or PvpActionType.UsePotion)
             : 0;
+    }
+
+    private bool TryBuildAuthoritativeIntentView(ulong viewerId, ulong targetId, out PvpIntentView? view)
+    {
+        view = null;
+        PvpPlanningFrame? frame = GetDisplayPlanningFrame();
+        if (frame == null)
+        {
+            return false;
+        }
+
+        PvpRoundSubmission? viewerSubmission = frame.Submissions.FirstOrDefault(submission => submission.PlayerId == viewerId);
+        PvpRoundSubmission? targetSubmission = frame.Submissions.FirstOrDefault(submission => submission.PlayerId == targetId);
+        if (viewerSubmission == null || targetSubmission == null)
+        {
+            return false;
+        }
+
+        List<PvpPublicIntentSlot> targetSlots = targetSubmission.Actions
+            .Where(action => action.ActionType is PvpActionType.PlayCard or PvpActionType.UsePotion)
+            .Select(CreateIntentSlot)
+            .ToList();
+        int viewerActionCount = viewerSubmission.Actions.Count(action => action.ActionType is PvpActionType.PlayCard or PvpActionType.UsePotion);
+        int targetActionCount = targetSubmission.Actions.Count(action => action.ActionType is PvpActionType.PlayCard or PvpActionType.UsePotion);
+        int visibleCount = Math.Min(viewerActionCount, targetSlots.Count);
+        view = new PvpIntentView
+        {
+            RoundIndex = frame.RoundIndex,
+            ViewerId = viewerId,
+            TargetId = targetId,
+            RoundStartEnergy = targetSubmission.RoundStartEnergy,
+            Locked = targetSubmission.Locked,
+            IsFirstFinisher = targetSubmission.IsFirstFinisher,
+            RevealBudget = viewerActionCount,
+            ViewerActionCount = viewerActionCount,
+            TargetActionCount = targetActionCount,
+            VisibleCount = visibleCount,
+            HiddenCount = Math.Max(targetSlots.Count - visibleCount, 0),
+            VisibleSlots = targetSlots.Take(visibleCount).ToList()
+        };
+        return true;
+    }
+
+    private PvpPlanningFrame? GetDisplayPlanningFrame()
+    {
+        if (LastAuthoritativePlanningFrame == null)
+        {
+            return null;
+        }
+
+        if (CurrentRound.RoundIndex > 0 && LastAuthoritativePlanningFrame.RoundIndex != CurrentRound.RoundIndex)
+        {
+            return null;
+        }
+
+        if (CurrentRound.SnapshotAtRoundStart.SnapshotVersion > 0 && LastAuthoritativePlanningFrame.SnapshotVersion != CurrentRound.SnapshotAtRoundStart.SnapshotVersion)
+        {
+            return null;
+        }
+
+        return LastAuthoritativePlanningFrame;
+    }
+
+    private static PvpPublicIntentSlot CreateIntentSlot(PvpPlannedAction action)
+    {
+        PvpAction classifierAction = new()
+        {
+            ActionType = action.ActionType,
+            ModelEntry = action.ModelEntry,
+            Target = action.Target
+        };
+        return new PvpPublicIntentSlot
+        {
+            Category = PvpIntentClassifier.GetCategory(classifierAction),
+            TargetSide = PvpIntentClassifier.GetTargetSide(classifierAction)
+        };
     }
 
 }

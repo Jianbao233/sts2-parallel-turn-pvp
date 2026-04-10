@@ -23,3 +23,9 @@
 
 
 
+
+## 2026-04-10 Authoritative Planning
+- added PvpPlanningFrameMessage and host-authoritative planning submission broadcast
+- planning frame now updates in real time after card, potion, end turn, and round start
+- clients now consume authoritative planning frames instead of relying only on local round reconstruction
+- intent view now prefers authoritative planning frame data when available

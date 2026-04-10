@@ -18,5 +18,6 @@ public interface IPvpPlanningCompiler
 public interface IPvpSyncBridge
 {
     void BroadcastRoundState(PvpRoundState state);
+    void BroadcastPlanningFrame(PvpPlanningFrame frame);
     void BroadcastRoundResult(PvpRoundResult result);
 }

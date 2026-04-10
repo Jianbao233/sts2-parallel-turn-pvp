@@ -44,6 +44,7 @@ public static class ParallelTurnCombatSetupPatch
         var runtime = PvpRuntimeRegistry.GetOrCreate(runState);
         runtime.BeginCombat(state);
         new PvpNetBridge().BroadcastRoundState(runtime.CurrentRound);
+        new PvpNetBridge().BroadcastPlanningFrame(runtime.BuildPlanningFrame());
 
         foreach (var player in state.Players)
         {
@@ -120,6 +121,7 @@ public static class ParallelTurnSwitchSidesPatch
 
         runtime.StartRoundFromLiveState(combatState, combatState.RoundNumber);
         new PvpNetBridge().BroadcastRoundState(runtime.CurrentRound);
+        new PvpNetBridge().BroadcastPlanningFrame(runtime.BuildPlanningFrame());
         Log.Info($"[ParallelTurnPvp] SwitchSides postfix started player round={runtime.CurrentRound.RoundIndex}");
 
         foreach (var player in combatState.Players)
