@@ -43,8 +43,8 @@ public struct PvpRoundResultMessage : INetMessage
     public int frontline2Hp;
     public int frontline1Block;
     public int frontline2Block;
-    public List<int> eventKinds = new();
-    public List<string> eventTexts = new();
+    public List<int>? eventKinds;
+    public List<string>? eventTexts;
 
     public bool ShouldBroadcast => true;
     public NetTransferMode Mode => NetTransferMode.Reliable;
@@ -64,12 +64,14 @@ public struct PvpRoundResultMessage : INetMessage
         writer.WriteInt(frontline2Hp);
         writer.WriteInt(frontline1Block);
         writer.WriteInt(frontline2Block);
-        int eventCount = Math.Min(eventKinds?.Count ?? 0, eventTexts?.Count ?? 0);
+        List<int> eventKindsLocal = eventKinds ?? new List<int>();
+        List<string> eventTextsLocal = eventTexts ?? new List<string>();
+        int eventCount = Math.Min(eventKindsLocal.Count, eventTextsLocal.Count);
         writer.WriteInt(eventCount);
         for (int i = 0; i < eventCount; i++)
         {
-            writer.WriteInt(eventKinds[i]);
-            writer.WriteString(eventTexts[i] ?? string.Empty);
+            writer.WriteInt(eventKindsLocal[i]);
+            writer.WriteString(eventTextsLocal[i] ?? string.Empty);
         }
     }
 
