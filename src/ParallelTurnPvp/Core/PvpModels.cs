@@ -91,6 +91,7 @@ public sealed class PvpRoundResult
     public int RoundIndex { get; init; }
     public PvpCombatSnapshot InitialSnapshot { get; init; } = new();
     public PvpCombatSnapshot FinalSnapshot { get; init; } = new();
+    public PvpCombatSnapshot? PredictedFinalSnapshot { get; set; }
     public PvpRoundExecutionPlan? ExecutionPlan { get; set; }
     public List<PvpResolvedEvent> Events { get; } = new();
 }

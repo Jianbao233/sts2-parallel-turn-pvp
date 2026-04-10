@@ -10,6 +10,7 @@ Current state: stable local checkpoint for two-machine debug testing.
 - cards, potions, targeting, turn progression, and match end loop
 - frontline-first targeting rules
 - limited-intent runtime and first-pass combat overlay
+- planning submission, execution-plan, and predicted-delta bridge for future delayed resolution
 
 ## Current temporary restrictions
 - early-lock heal reward is temporarily disabled in live combat to avoid checksum drift

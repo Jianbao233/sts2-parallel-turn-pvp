@@ -20,6 +20,11 @@ public interface IPvpExecutionPlanner
     PvpRoundExecutionPlan BuildPlan(int roundIndex, IReadOnlyList<PvpRoundSubmission> submissions);
 }
 
+public interface IPvpPredictionEngine
+{
+    PvpCombatSnapshot Predict(PvpCombatSnapshot initialSnapshot, PvpRoundExecutionPlan plan);
+}
+
 public interface IPvpSyncBridge
 {
     void BroadcastRoundState(PvpRoundState state);

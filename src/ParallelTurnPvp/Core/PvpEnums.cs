@@ -53,6 +53,8 @@ public enum PvpResolvedEventKind
 {
     RoundStarted,
     ExecutionPlanBuilt,
+    PredictionBuilt,
+    PredictionCompared,
     PhaseStarted,
     ActionScheduled,
     ActionLogged,

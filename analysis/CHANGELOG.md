@@ -1,5 +1,10 @@
 ﻿# CHANGELOG
 
+## 2026-04-11 Prediction Bridge
+- added PvpPredictionEngine so RoundExecutionPlan now produces a predicted end-of-round snapshot without touching vanilla live combat
+- PvpRoundResult now carries PredictedFinalSnapshot alongside InitialSnapshot, FinalSnapshot, and ExecutionPlan
+- resolver now emits prediction-built and prediction-compared events, making drift between planned outcomes and actual live-combat outcomes visible in logs and round summaries
+- white-list prediction rules now cover the current debug content set: strike, defend, afterlife, poke, frontline brace, break formation, block potion, energy potion, blood potion, and frontline salve
 ## 2026-04-10 Sync Fix`r`n- expanded the intent overlay into a combined intent + last-round summary panel so card/potion logging can be verified in-game`r`n- reverted the experimental early-lock heal implementation that used ConsoleCmdGameAction("heal ...")
 - confirmed from host/client logs that the console-command path triggers RecordInitialState must be called first on clients and corrupts replay/checksum tracking
 - restored the stable baseline: the early-lock heal rule stays in design docs, but live combat execution is disabled again to avoid StateDivergence
@@ -37,3 +42,4 @@
 - added PvpExecutionPlanner and RoundExecutionPlan so resolver now groups planned actions into execution phases before generating summaries
 
 - added secondary-machine workflow: optional direct deploy to \\DESKTOP-U51KJJ2\Mods and direct log pull from \\DESKTOP-U51KJJ2\SlayTheSpire2\logs
+

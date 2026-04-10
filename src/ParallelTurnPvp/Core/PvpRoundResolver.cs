@@ -3,6 +3,7 @@ namespace ParallelTurnPvp.Core;
 public sealed class PvpRoundResolver : IPvpRoundResolver
 {
     private readonly IPvpExecutionPlanner _planner = new PvpExecutionPlanner();
+    private readonly IPvpPredictionEngine _predictionEngine = new PvpPredictionEngine();
 
     public PvpRoundResult Resolve(PvpCombatSnapshot initialSnapshot, IReadOnlyList<PvpRoundSubmission> submissions, PvpCombatSnapshot finalSnapshot)
     {
@@ -13,7 +14,9 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
             FinalSnapshot = finalSnapshot
         };
         PvpRoundExecutionPlan plan = _planner.BuildPlan(initialSnapshot.RoundIndex, submissions);
+        PvpCombatSnapshot predictedSnapshot = _predictionEngine.Predict(initialSnapshot, plan);
         result.ExecutionPlan = plan;
+        result.PredictedFinalSnapshot = predictedSnapshot;
 
         result.Events.Add(new PvpResolvedEvent
         {
@@ -24,6 +27,11 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
         {
             Kind = PvpResolvedEventKind.ExecutionPlanBuilt,
             Text = $"Built execution plan for round {initialSnapshot.RoundIndex}: phases={plan.Steps.Select(step => step.Phase).Distinct().Count()}, steps={plan.Steps.Count}."
+        });
+        result.Events.Add(new PvpResolvedEvent
+        {
+            Kind = PvpResolvedEventKind.PredictionBuilt,
+            Text = $"Predicted round {initialSnapshot.RoundIndex} snapshot from execution plan."
         });
 
         foreach (PvpRoundSubmission submission in submissions.OrderBy(submission => submission.PlayerId))
@@ -61,6 +69,32 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
                 });
             }
         }
+
+        AppendCreatureDeltaEvents(
+            result,
+            initialSnapshot.Heroes,
+            predictedSnapshot.Heroes,
+            PvpResolvedEventKind.PredictionBuilt,
+            "Predicted Hero");
+
+        AppendCreatureDeltaEvents(
+            result,
+            initialSnapshot.Frontlines,
+            predictedSnapshot.Frontlines,
+            PvpResolvedEventKind.PredictionBuilt,
+            "Predicted Frontline");
+
+        AppendPredictionComparisonEvents(
+            result,
+            predictedSnapshot.Heroes,
+            finalSnapshot.Heroes,
+            "Hero");
+
+        AppendPredictionComparisonEvents(
+            result,
+            predictedSnapshot.Frontlines,
+            finalSnapshot.Frontlines,
+            "Frontline");
 
         AppendCreatureDeltaEvents(
             result,
@@ -119,6 +153,41 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
                     Text = $"{label} {playerId} hp {before.CurrentHp}/{before.MaxHp} -> {after.CurrentHp}/{after.MaxHp}, block {before.Block} -> {after.Block}"
                 });
             }
+        }
+    }
+
+    private static void AppendPredictionComparisonEvents(
+        PvpRoundResult result,
+        IReadOnlyDictionary<ulong, PvpCreatureSnapshot> predictedSnapshots,
+        IReadOnlyDictionary<ulong, PvpCreatureSnapshot> finalSnapshots,
+        string label)
+    {
+        foreach (ulong playerId in predictedSnapshots.Keys.Union(finalSnapshots.Keys).OrderBy(id => id))
+        {
+            predictedSnapshots.TryGetValue(playerId, out PvpCreatureSnapshot? predicted);
+            finalSnapshots.TryGetValue(playerId, out PvpCreatureSnapshot? actual);
+
+            predicted ??= new PvpCreatureSnapshot();
+            actual ??= new PvpCreatureSnapshot();
+
+            if (predicted.Exists == actual.Exists &&
+                predicted.CurrentHp == actual.CurrentHp &&
+                predicted.MaxHp == actual.MaxHp &&
+                predicted.Block == actual.Block)
+            {
+                result.Events.Add(new PvpResolvedEvent
+                {
+                    Kind = PvpResolvedEventKind.PredictionCompared,
+                    Text = $"{label} {playerId} prediction matched actual."
+                });
+                continue;
+            }
+
+            result.Events.Add(new PvpResolvedEvent
+            {
+                Kind = PvpResolvedEventKind.PredictionCompared,
+                Text = $"{label} {playerId} prediction drift: predicted exists={predicted.Exists} hp {predicted.CurrentHp}/{predicted.MaxHp} block {predicted.Block}, actual exists={actual.Exists} hp {actual.CurrentHp}/{actual.MaxHp} block {actual.Block}"
+            });
         }
     }
 }
