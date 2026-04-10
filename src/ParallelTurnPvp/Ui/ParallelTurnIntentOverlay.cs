@@ -33,10 +33,10 @@ public partial class ParallelTurnIntentOverlay : Control
     public override void _Ready()
     {
         SetAnchorsPreset(LayoutPreset.TopRight);
-        OffsetLeft = -300f;
+        OffsetLeft = -360f;
         OffsetTop = 110f;
         OffsetRight = -18f;
-        OffsetBottom = 340f;
+        OffsetBottom = 470f;
         MouseFilter = MouseFilterEnum.Ignore;
 
         var panel = new PanelContainer();
@@ -117,7 +117,7 @@ public partial class ParallelTurnIntentOverlay : Control
             return;
         }
 
-        string rendered = BuildText(view);
+        string rendered = BuildText(view, runtime.LastAuthoritativeResult, me.NetId, opponent.NetId);
         _title.Text = $"Opponent Intent  R{view.RoundIndex}";
         if (_lastRendered != rendered)
         {
@@ -128,14 +128,16 @@ public partial class ParallelTurnIntentOverlay : Control
         Visible = true;
     }
 
-    private static string BuildText(PvpIntentView view)
+    private static string BuildText(PvpIntentView view, PvpRoundResult? lastResult, ulong meId, ulong opponentId)
     {
         int totalCount = view.VisibleCount + view.HiddenCount;
         var lines = new List<string>
         {
+            "[Intent]",
             $"Start Energy: {view.RoundStartEnergy}",
             $"State: {(view.Locked ? "Locked" : "Planning")}{(view.IsFirstFinisher ? " | First lock" : string.Empty)}",
-            $"Reveal: {(totalCount == 0 ? 0 : view.VisibleCount)}/{totalCount}"
+            $"Reveal: {(totalCount == 0 ? 0 : view.VisibleCount)}/{totalCount}",
+            $"Visible Budget: {view.RevealBudget}"
         };
 
         if (view.VisibleCount == 0 && view.HiddenCount == 0)
@@ -156,7 +158,46 @@ public partial class ParallelTurnIntentOverlay : Control
             }
         }
 
+        lines.Add(string.Empty);
+        lines.Add("[Last Resolved Round]");
+        if (lastResult == null)
+        {
+            lines.Add("No resolved round yet.");
+        }
+        else
+        {
+            lines.Add($"Round: {lastResult.RoundIndex}");
+            foreach (string eventLine in BuildRoundSummary(lastResult, meId, opponentId))
+            {
+                lines.Add(eventLine);
+            }
+        }
+
         return string.Join('\n', lines);
+    }
+
+    private static IEnumerable<string> BuildRoundSummary(PvpRoundResult result, ulong meId, ulong opponentId)
+    {
+        if (result.Events.Count == 0)
+        {
+            yield return "No summary events.";
+            yield break;
+        }
+
+        foreach (PvpResolvedEvent resolvedEvent in result.Events.TakeLast(10))
+        {
+            yield return ReplacePlayerIds(resolvedEvent.Text, meId, opponentId);
+        }
+    }
+
+    private static string ReplacePlayerIds(string text, ulong meId, ulong opponentId)
+    {
+        return text
+            .Replace(meId.ToString(), "You")
+            .Replace(opponentId.ToString(), "Opponent")
+            .Replace("PlayCard", "Card")
+            .Replace("UsePotion", "Potion")
+            .Replace("EndRound", "EndTurn");
     }
 
     private static string FormatCategory(PvpIntentCategory category)

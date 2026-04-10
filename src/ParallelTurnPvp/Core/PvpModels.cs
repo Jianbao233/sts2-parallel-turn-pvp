@@ -280,8 +280,17 @@ public sealed class PvpMatchRuntime
 
     public void ApplyAuthoritativeResult(PvpRoundResult result)
     {
+        if (result.Events.Count == 0)
+        {
+            var orderedLogs = CurrentRound.LogsByPlayer.OrderBy(entry => entry.Key).Select(entry => entry.Value).ToList();
+            result = _resolver.Resolve(CurrentRound.SnapshotAtRoundStart, orderedLogs, result.FinalSnapshot);
+            Log.Info($"[ParallelTurnPvp] Rebuilt authoritative round summary locally. round={result.RoundIndex} events={result.Events.Count}");
+        }
+
         LastAuthoritativeResult = result;
         CurrentRound.LastResult = result;
+        CurrentRound.HasResolved = true;
+        CurrentRound.Phase = PvpMatchPhase.RoundEnd;
     }
 
     public void QueueAuthoritativeSnapshot(PvpCombatSnapshot snapshot)
