@@ -35,3 +35,5 @@
 - moved round summary generation onto planning submissions so resolver input now follows the planning layer instead of raw action logs
 
 - added PvpExecutionPlanner and RoundExecutionPlan so resolver now groups planned actions into execution phases before generating summaries
+
+- added secondary-machine workflow: optional direct deploy to \\DESKTOP-U51KJJ2\Mods and direct log pull from \\DESKTOP-U51KJJ2\SlayTheSpire2\logs
