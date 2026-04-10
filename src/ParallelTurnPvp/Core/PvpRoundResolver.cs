@@ -2,7 +2,7 @@ namespace ParallelTurnPvp.Core;
 
 public sealed class PvpRoundResolver : IPvpRoundResolver
 {
-    public PvpRoundResult Resolve(PvpCombatSnapshot initialSnapshot, IReadOnlyList<PvpActionLog> logs, PvpCombatSnapshot finalSnapshot)
+    public PvpRoundResult Resolve(PvpCombatSnapshot initialSnapshot, IReadOnlyList<PvpRoundSubmission> submissions, PvpCombatSnapshot finalSnapshot)
     {
         var result = new PvpRoundResult
         {
@@ -14,23 +14,32 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
         result.Events.Add(new PvpResolvedEvent
         {
             Kind = PvpResolvedEventKind.RoundResolved,
-            Text = $"Resolved round {initialSnapshot.RoundIndex} with {logs.Sum(log => log.Actions.Count)} logged actions."
+            Text = $"Resolved round {initialSnapshot.RoundIndex} with {submissions.Sum(submission => submission.Actions.Count)} planned actions."
         });
 
-        foreach (PvpActionLog log in logs.OrderBy(log => log.PlayerId))
+        foreach (PvpRoundSubmission submission in submissions.OrderBy(submission => submission.PlayerId))
         {
             result.Events.Add(new PvpResolvedEvent
             {
                 Kind = PvpResolvedEventKind.ActionLogged,
-                Text = $"Player {log.PlayerId} submitted {log.Actions.Count} actions ({SummarizeActions(log)})."
+                Text = $"Player {submission.PlayerId} submitted {submission.Actions.Count} planned actions ({SummarizeActions(submission)}), energy={submission.RoundStartEnergy}, locked={submission.Locked}, first={submission.IsFirstFinisher}."
             });
 
-            foreach (PvpAction action in log.Actions.OrderBy(action => action.Sequence))
+            if (submission.Locked)
+            {
+                result.Events.Add(new PvpResolvedEvent
+                {
+                    Kind = PvpResolvedEventKind.PlayerLocked,
+                    Text = $"Player {submission.PlayerId} locked round {submission.RoundIndex}{(submission.IsFirstFinisher ? " first" : string.Empty)}."
+                });
+            }
+
+            foreach (PvpPlannedAction action in submission.Actions.OrderBy(action => action.Sequence))
             {
                 result.Events.Add(new PvpResolvedEvent
                 {
                     Kind = PvpResolvedEventKind.ActionLogged,
-                    Text = $"Player {log.PlayerId} #{action.Sequence + 1}: {action.ActionType} {action.ModelEntry} -> {action.Target.Kind} [actionId={action.RuntimeActionId?.ToString() ?? "-"}]"
+                    Text = $"Player {submission.PlayerId} #{action.Sequence + 1}: {action.ActionType} {action.ModelEntry} -> {action.Target.Kind} [actionId={action.RuntimeActionId?.ToString() ?? "-"}]"
                 });
             }
         }
@@ -52,11 +61,11 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
         return result;
     }
 
-    private static string SummarizeActions(PvpActionLog log)
+    private static string SummarizeActions(PvpRoundSubmission submission)
     {
-        int cards = log.Actions.Count(action => action.ActionType == PvpActionType.PlayCard);
-        int potions = log.Actions.Count(action => action.ActionType == PvpActionType.UsePotion);
-        int endTurn = log.Actions.Count(action => action.ActionType == PvpActionType.EndRound);
+        int cards = submission.Actions.Count(action => action.ActionType == PvpActionType.PlayCard);
+        int potions = submission.Actions.Count(action => action.ActionType == PvpActionType.UsePotion);
+        int endTurn = submission.Actions.Count(action => action.ActionType == PvpActionType.EndRound);
         return $"cards={cards}, potions={potions}, endTurn={endTurn}";
     }
 

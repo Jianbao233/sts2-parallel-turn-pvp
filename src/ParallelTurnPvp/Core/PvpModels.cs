@@ -326,13 +326,14 @@ public sealed class PvpMatchRuntime
     {
         int resolvedRoundIndex = CurrentRound.RoundIndex > 0 ? CurrentRound.RoundIndex : combatState.RoundNumber;
         var finalSnapshot = SnapshotFactory.Create(combatState, resolvedRoundIndex, SnapshotVersion + 1);
-        var orderedLogs = CurrentRound.LogsByPlayer.OrderBy(entry => entry.Key).Select(entry => entry.Value).ToList();
-        var result = _resolver.Resolve(CurrentRound.SnapshotAtRoundStart, orderedLogs, finalSnapshot);
+        IReadOnlyList<PvpRoundSubmission> submissions = GetPlanningSubmissions();
+        var result = _resolver.Resolve(CurrentRound.SnapshotAtRoundStart, submissions, finalSnapshot);
         CurrentRound.LastResult = result;
         CurrentRound.HasResolved = true;
         CurrentRound.Phase = PvpMatchPhase.RoundEnd;
         LastAuthoritativeResult = result;
         SnapshotVersion++;
+        Log.Info($"[ParallelTurnPvp] ResolveLiveRound used planning submissions. round={resolvedRoundIndex} submissions={submissions.Count} actions={submissions.Sum(submission => submission.Actions.Count)}");
         foreach (PvpResolvedEvent resolvedEvent in result.Events)
         {
             Log.Info($"[ParallelTurnPvp] RoundEvent kind={resolvedEvent.Kind} text={resolvedEvent.Text}");
@@ -344,9 +345,9 @@ public sealed class PvpMatchRuntime
     {
         if (result.Events.Count == 0)
         {
-            var orderedLogs = CurrentRound.LogsByPlayer.OrderBy(entry => entry.Key).Select(entry => entry.Value).ToList();
-            result = _resolver.Resolve(CurrentRound.SnapshotAtRoundStart, orderedLogs, result.FinalSnapshot);
-            Log.Info($"[ParallelTurnPvp] Rebuilt authoritative round summary locally. round={result.RoundIndex} events={result.Events.Count}");
+            IReadOnlyList<PvpRoundSubmission> submissions = GetResolverSubmissionsForCurrentRound();
+            result = _resolver.Resolve(CurrentRound.SnapshotAtRoundStart, submissions, result.FinalSnapshot);
+            Log.Info($"[ParallelTurnPvp] Rebuilt authoritative round summary from planning submissions. round={result.RoundIndex} submissions={submissions.Count} events={result.Events.Count}");
         }
 
         LastAuthoritativeResult = result;
@@ -506,6 +507,16 @@ public sealed class PvpMatchRuntime
 
         CurrentRound.PublicIntentByPlayer.TryGetValue(playerId, out PvpPlayerIntentState? intentState);
         return _planningCompiler.BuildSubmission(CurrentRound.RoundIndex, log, intentState);
+    }
+
+    public IReadOnlyList<PvpRoundSubmission> GetPlanningSubmissions()
+    {
+        return CurrentRound.LogsByPlayer.Keys
+            .OrderBy(id => id)
+            .Select(GetPlanningSubmission)
+            .Where(submission => submission != null)
+            .Cast<PvpRoundSubmission>()
+            .ToList();
     }
 
     public PvpPlanningFrame BuildPlanningFrame()
@@ -689,6 +700,16 @@ public sealed class PvpMatchRuntime
         return CurrentRound.LogsByPlayer.TryGetValue(playerId, out PvpActionLog? log)
             ? log.Actions.Count(action => action.ActionType is PvpActionType.PlayCard or PvpActionType.UsePotion)
             : 0;
+    }
+
+    private IReadOnlyList<PvpRoundSubmission> GetResolverSubmissionsForCurrentRound()
+    {
+        if (LastAuthoritativePlanningFrame != null && LastAuthoritativePlanningFrame.RoundIndex == CurrentRound.RoundIndex)
+        {
+            return LastAuthoritativePlanningFrame.Submissions;
+        }
+
+        return GetPlanningSubmissions();
     }
 
     private bool TryBuildAuthoritativeIntentView(ulong viewerId, ulong targetId, out PvpIntentView? view)

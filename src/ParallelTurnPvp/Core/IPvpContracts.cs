@@ -7,7 +7,7 @@ public interface IFrontlineRouter
 
 public interface IPvpRoundResolver
 {
-    PvpRoundResult Resolve(PvpCombatSnapshot initialSnapshot, IReadOnlyList<PvpActionLog> logs, PvpCombatSnapshot finalSnapshot);
+    PvpRoundResult Resolve(PvpCombatSnapshot initialSnapshot, IReadOnlyList<PvpRoundSubmission> submissions, PvpCombatSnapshot finalSnapshot);
 }
 
 public interface IPvpPlanningCompiler
