@@ -1,4 +1,4 @@
-using MegaCrit.Sts2.Core.Combat;
+﻿using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Logging;
@@ -9,6 +9,7 @@ namespace ParallelTurnPvp.Core;
 
 public static class PvpDelayedExecution
 {
+    private static readonly bool EnableLiveDelayedApply = false;
     private static readonly HashSet<string> DelayedLiveApplyModelEntries = new(StringComparer.Ordinal)
     {
         "FRONTLINE_BRACE",
@@ -17,6 +18,11 @@ public static class PvpDelayedExecution
 
     public static bool ShouldDelayLiveApply(Player player, string modelEntry)
     {
+        if (!EnableLiveDelayedApply)
+        {
+            return false;
+        }
+
         return player.RunState is RunState runState &&
                runState.Modifiers.OfType<ParallelTurnPvpDebugModifier>().Any() &&
                DelayedLiveApplyModelEntries.Contains(modelEntry);
@@ -24,11 +30,16 @@ public static class PvpDelayedExecution
 
     public static bool ShouldDelayLiveApply(string modelEntry)
     {
-        return DelayedLiveApplyModelEntries.Contains(modelEntry);
+        return EnableLiveDelayedApply && DelayedLiveApplyModelEntries.Contains(modelEntry);
     }
 
     public static int ApplyDelayedLiveEffects(PvpMatchRuntime runtime, CombatState combatState)
     {
+        if (!EnableLiveDelayedApply)
+        {
+            return 0;
+        }
+
         if (runtime.CurrentRound.DelayedLiveEffectsApplied || runtime.CurrentRound.RoundIndex <= 0)
         {
             return 0;
@@ -82,3 +93,4 @@ public static class PvpDelayedExecution
         };
     }
 }
+

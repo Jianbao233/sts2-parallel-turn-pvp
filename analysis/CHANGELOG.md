@@ -1,5 +1,9 @@
 ﻿# CHANGELOG
 
+## 2026-04-11 Disable Unsafe Live Delayed Apply
+- disabled the first live delayed-apply cut in `PvpDelayedExecution` by feature-flagging it off
+- confirmed from fresh host/client logs that mutating vanilla live combat during round switch triggers replay/checksum failures and `StateDivergence`
+- kept the planning/execution/delta/prediction scaffolding intact, but restored the stable baseline where custom self-effects execute immediately again
 ## 2026-04-11 First Delayed Apply Cut
 - introduced PvpDelayedExecution as the first real delayed-apply bridge on top of the stable instant-combat shell
 - FrontlineBrace and FrontlineSalve now defer their immediate live effect in debug arena and apply it during round resolution from the current round delta plan
@@ -13,7 +17,9 @@
 - PvpRoundResult now carries PredictedFinalSnapshot alongside InitialSnapshot, FinalSnapshot, and ExecutionPlan
 - resolver now emits prediction-built and prediction-compared events, making drift between planned outcomes and actual live-combat outcomes visible in logs and round summaries
 - white-list prediction rules now cover the current debug content set: strike, defend, afterlife, poke, frontline brace, break formation, block potion, energy potion, blood potion, and frontline salve
-## 2026-04-10 Sync Fix`r`n- expanded the intent overlay into a combined intent + last-round summary panel so card/potion logging can be verified in-game`r`n- reverted the experimental early-lock heal implementation that used ConsoleCmdGameAction("heal ...")
+## 2026-04-10 Sync Fix
+- expanded the intent overlay into a combined intent + last-round summary panel so card/potion logging can be verified in-game
+- reverted the experimental early-lock heal implementation that used ConsoleCmdGameAction("heal ...")
 - confirmed from host/client logs that the console-command path triggers RecordInitialState must be called first on clients and corrupts replay/checksum tracking
 - restored the stable baseline: the early-lock heal rule stays in design docs, but live combat execution is disabled again to avoid StateDivergence
 ## 2026-04-10 Stable Checkpoint
@@ -50,6 +56,7 @@
 - added PvpExecutionPlanner and RoundExecutionPlan so resolver now groups planned actions into execution phases before generating summaries
 
 - added secondary-machine workflow: optional direct deploy to \\DESKTOP-U51KJJ2\Mods and direct log pull from \\DESKTOP-U51KJJ2\SlayTheSpire2\logs
+
 
 
 
