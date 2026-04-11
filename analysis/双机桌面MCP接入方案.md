@@ -17,6 +17,7 @@
    - 副机建议：`3233`
 4. 两边都开放对应 TCP 入站规则
 5. Codex 后续会话读取 MCP 配置后，分别把两台机器作为两个 MCP server 接入
+6. 安装根目录统一为 `J:\Tools\MCPControl`
 
 ## 为什么这是当前唯一可行的“双机直连”方案
 1. 目标不是“在两台机器上装自动化脚本”
@@ -26,11 +27,11 @@
 
 ## 技术栈要求
 ### 每台机器
-- Python 3.12
-- Node.js LTS
+- 便携 Python `3.12.10`
+- 便携 Node.js `22.x LTS`
 - Visual Studio 2022 Build Tools
   - 包含 `Desktop development with C++` / `VC Tools`
-- `mcp-control` 全局安装
+- `mcp-control` 安装到 `J:\Tools\MCPControl\npm-global`
 
 ### 为什么必须装 C++ Build Tools
 - `mcp-control` 依赖 `keysender`
@@ -45,14 +46,24 @@
 3. 等 MCP 配置加进 Codex 并重开/重载会话后，我才能真正直接调用这两台机器
 
 ## 当前已落地文件
+- [Setup-McpControl.ps1](K:\杀戮尖塔mod制作\STS2_mod\PVP_ParallelTurn\tools\desktop_mcp\mcpcontrol\Setup-McpControl.ps1)
+- [Setup-McpControlPrimary.ps1](K:\杀戮尖塔mod制作\STS2_mod\PVP_ParallelTurn\tools\desktop_mcp\mcpcontrol\Setup-McpControlPrimary.ps1)
 - [Setup-McpControlSecondary.ps1](K:\杀戮尖塔mod制作\STS2_mod\PVP_ParallelTurn\tools\desktop_mcp\mcpcontrol\Setup-McpControlSecondary.ps1)
+- [Configure-CodexMcp.ps1](K:\杀戮尖塔mod制作\STS2_mod\PVP_ParallelTurn\tools\desktop_mcp\mcpcontrol\Configure-CodexMcp.ps1)
 - [README.md](K:\杀戮尖塔mod制作\STS2_mod\PVP_ParallelTurn\tools\desktop_mcp\mcpcontrol\README.md)
 
 ## 副机共享目录已部署
 - `\\DESKTOP-U51KJJ2\SlayTheSpire2\tools\desktop_mcp\mcpcontrol`
 
 ## 你下一步要做的事
-在副机 PowerShell 执行：
+先在主机 PowerShell 执行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+powershell -ExecutionPolicy Bypass -File "K:\杀戮尖塔mod制作\STS2_mod\PVP_ParallelTurn\tools\desktop_mcp\mcpcontrol\Setup-McpControlPrimary.ps1" -Port 3232
+```
+
+再在副机 PowerShell 执行：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
@@ -62,7 +73,17 @@ powershell -ExecutionPolicy Bypass -File "\\DESKTOP-U51KJJ2\SlayTheSpire2\tools\
 安装完成后启动服务：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "C:\Tools\MCPControl\Start-McpControl.ps1" -Port 3233
+powershell -ExecutionPolicy Bypass -File "J:\Tools\MCPControl\Start-McpControl.ps1" -Port 3232
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "J:\Tools\MCPControl\Start-McpControl.ps1" -Port 3233
+```
+
+然后在主机执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "K:\杀戮尖塔mod制作\STS2_mod\PVP_ParallelTurn\tools\desktop_mcp\mcpcontrol\Configure-CodexMcp.ps1"
 ```
 
 ## 后续我这边接的配置方向

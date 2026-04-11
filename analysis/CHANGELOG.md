@@ -1,5 +1,10 @@
 ﻿# CHANGELOG
 
+## 2026-04-11 J Drive MCP Deployment
+- replaced the old winget-based secondary-only MCP installer with a shared Setup-McpControl.ps1 flow that installs portable Node 22, portable Python 3.12.10, VS2022 Build Tools, and mcp-control under J:\Tools\MCPControl
+- added Setup-McpControlPrimary.ps1, Setup-McpControlSecondary.ps1, and Configure-CodexMcp.ps1 so primary/secondary setup and Codex MCP registration are explicit and repeatable
+- installed and verified the primary machine stack on J:, generated J:\Tools\MCPControl\Start-McpControl.ps1, and wrote primary-desktop / secondary-desktop into C:\Users\Administrator\.codex\config.toml
+- synced the latest MCP scripts to \\DESKTOP-U51KJJ2\SlayTheSpire2\tools\desktop_mcp\mcpcontrol and added a handoff doc for the next session
 ## 2026-04-11 Disable Unsafe Live Delayed Apply
 - disabled the first live delayed-apply cut in `PvpDelayedExecution` by feature-flagging it off
 - confirmed from fresh host/client logs that mutating vanilla live combat during round switch triggers replay/checksum failures and `StateDivergence`
@@ -56,6 +61,7 @@
 - added PvpExecutionPlanner and RoundExecutionPlan so resolver now groups planned actions into execution phases before generating summaries
 
 - added secondary-machine workflow: optional direct deploy to \\DESKTOP-U51KJJ2\Mods and direct log pull from \\DESKTOP-U51KJJ2\SlayTheSpire2\logs
+
 
 
 
