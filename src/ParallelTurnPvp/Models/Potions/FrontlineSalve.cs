@@ -39,6 +39,13 @@ public sealed class FrontlineSalve : PotionModel
 
     protected override async Task OnUse(PlayerChoiceContext choiceContext, Creature? target)
     {
+        if (PvpDelayedExecution.ShouldDelayLiveApply(Owner, Id.Entry))
+        {
+            Log.Info($"[ParallelTurnPvp] Deferred immediate potion effect for {Id.Entry}. effect will be applied during round resolution.");
+            await Task.CompletedTask;
+            return;
+        }
+
         var actualTarget = ParallelTurnFrontlineHelper.GetFrontline(Owner) ?? Owner.Creature;
         await CreatureCmd.Heal(actualTarget, DynamicVars[HealKey].BaseValue, true);
     }

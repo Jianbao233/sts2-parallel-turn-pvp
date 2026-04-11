@@ -1,5 +1,9 @@
 ﻿# CHANGELOG
 
+## 2026-04-11 First Delayed Apply Cut
+- introduced PvpDelayedExecution as the first real delayed-apply bridge on top of the stable instant-combat shell
+- FrontlineBrace and FrontlineSalve now defer their immediate live effect in debug arena and apply it during round resolution from the current round delta plan
+- this is intentionally limited to self-side custom content so the migration seam can be validated before touching vanilla defend/block-potion flow
 ## 2026-04-11 Delta Plan Bridge
 - added PvpDeltaPlanner so RoundExecutionPlan now compiles into a structured RoundDeltaPlan
 - prediction now runs from delta operations rather than directly interpreting card ids in the prediction engine
@@ -46,5 +50,6 @@
 - added PvpExecutionPlanner and RoundExecutionPlan so resolver now groups planned actions into execution phases before generating summaries
 
 - added secondary-machine workflow: optional direct deploy to \\DESKTOP-U51KJJ2\Mods and direct log pull from \\DESKTOP-U51KJJ2\SlayTheSpire2\logs
+
 
 

@@ -171,6 +171,7 @@ public sealed class PvpRoundState
     public Dictionary<ulong, PvpPlayerIntentState> PublicIntentByPlayer { get; } = new();
     public PvpRoundResult? LastResult { get; set; }
     public bool HasResolved { get; set; }
+    public bool DelayedLiveEffectsApplied { get; set; }
     public ulong FirstLockedPlayerId { get; set; }
     public bool FirstLockRewardGranted { get; set; }
     public PvpCombatSnapshot? PendingAuthoritativeSnapshot { get; set; }

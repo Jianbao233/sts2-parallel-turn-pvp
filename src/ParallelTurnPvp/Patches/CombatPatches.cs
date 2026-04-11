@@ -86,6 +86,12 @@ public static class ParallelTurnSwitchSidesPatch
             return;
         }
 
+        int delayedApplied = PvpDelayedExecution.ApplyDelayedLiveEffects(runtime, combatState);
+        if (delayedApplied > 0)
+        {
+            Log.Info($"[ParallelTurnPvp] SwitchSides prefix applied delayed live effects. round={combatState.RoundNumber} operations={delayedApplied}");
+        }
+
         Player? rewardedPlayer = runtime.ApplyFirstLockRewardIfPending();
         if (rewardedPlayer != null)
         {

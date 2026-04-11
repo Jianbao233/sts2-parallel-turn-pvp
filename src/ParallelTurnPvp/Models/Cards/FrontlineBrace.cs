@@ -2,6 +2,7 @@
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Localization.DynamicVars;
+using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.ValueProps;
 using ParallelTurnPvp.Core;
@@ -29,6 +30,13 @@ public sealed class FrontlineBrace : CardModel
 
     protected override async Task OnPlay(PlayerChoiceContext choiceContext, CardPlay cardPlay)
     {
+        if (PvpDelayedExecution.ShouldDelayLiveApply(Owner, Id.Entry))
+        {
+            Log.Info($"[ParallelTurnPvp] Deferred immediate effect for {Id.Entry}. effect will be applied during round resolution.");
+            await Task.CompletedTask;
+            return;
+        }
+
         var target = ParallelTurnFrontlineHelper.GetFrontline(Owner) ?? Owner.Creature;
         await CreatureCmd.GainBlock(target, DynamicVars.Block, cardPlay, false);
     }
