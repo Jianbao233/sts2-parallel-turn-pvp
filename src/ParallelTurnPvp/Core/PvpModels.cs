@@ -93,6 +93,7 @@ public sealed class PvpRoundResult
     public PvpCombatSnapshot FinalSnapshot { get; init; } = new();
     public PvpCombatSnapshot? PredictedFinalSnapshot { get; set; }
     public PvpRoundExecutionPlan? ExecutionPlan { get; set; }
+    public PvpRoundDeltaPlan? DeltaPlan { get; set; }
     public List<PvpResolvedEvent> Events { get; } = new();
 }
 
@@ -111,6 +112,25 @@ public sealed class PvpRoundExecutionPlan
 {
     public int RoundIndex { get; init; }
     public List<PvpExecutionStep> Steps { get; } = new();
+}
+
+public sealed class PvpDeltaOperation
+{
+    public PvpResolutionPhase Phase { get; init; }
+    public PvpDeltaOperationKind Kind { get; init; }
+    public ulong SourcePlayerId { get; init; }
+    public ulong TargetPlayerId { get; init; }
+    public PvpTargetKind TargetKind { get; init; }
+    public int Amount { get; init; }
+    public int Sequence { get; init; }
+    public string ModelEntry { get; init; } = string.Empty;
+    public uint? RuntimeActionId { get; init; }
+}
+
+public sealed class PvpRoundDeltaPlan
+{
+    public int RoundIndex { get; init; }
+    public List<PvpDeltaOperation> Operations { get; } = new();
 }
 
 public sealed class PvpPlannedAction

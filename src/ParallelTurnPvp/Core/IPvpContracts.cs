@@ -20,9 +20,14 @@ public interface IPvpExecutionPlanner
     PvpRoundExecutionPlan BuildPlan(int roundIndex, IReadOnlyList<PvpRoundSubmission> submissions);
 }
 
+public interface IPvpDeltaPlanner
+{
+    PvpRoundDeltaPlan BuildDeltaPlan(PvpCombatSnapshot initialSnapshot, PvpRoundExecutionPlan plan);
+}
+
 public interface IPvpPredictionEngine
 {
-    PvpCombatSnapshot Predict(PvpCombatSnapshot initialSnapshot, PvpRoundExecutionPlan plan);
+    PvpCombatSnapshot Predict(PvpCombatSnapshot initialSnapshot, PvpRoundDeltaPlan deltaPlan);
 }
 
 public interface IPvpSyncBridge

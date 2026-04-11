@@ -3,6 +3,7 @@ namespace ParallelTurnPvp.Core;
 public sealed class PvpRoundResolver : IPvpRoundResolver
 {
     private readonly IPvpExecutionPlanner _planner = new PvpExecutionPlanner();
+    private readonly IPvpDeltaPlanner _deltaPlanner = new PvpDeltaPlanner();
     private readonly IPvpPredictionEngine _predictionEngine = new PvpPredictionEngine();
 
     public PvpRoundResult Resolve(PvpCombatSnapshot initialSnapshot, IReadOnlyList<PvpRoundSubmission> submissions, PvpCombatSnapshot finalSnapshot)
@@ -14,8 +15,10 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
             FinalSnapshot = finalSnapshot
         };
         PvpRoundExecutionPlan plan = _planner.BuildPlan(initialSnapshot.RoundIndex, submissions);
-        PvpCombatSnapshot predictedSnapshot = _predictionEngine.Predict(initialSnapshot, plan);
+        PvpRoundDeltaPlan deltaPlan = _deltaPlanner.BuildDeltaPlan(initialSnapshot, plan);
+        PvpCombatSnapshot predictedSnapshot = _predictionEngine.Predict(initialSnapshot, deltaPlan);
         result.ExecutionPlan = plan;
+        result.DeltaPlan = deltaPlan;
         result.PredictedFinalSnapshot = predictedSnapshot;
 
         result.Events.Add(new PvpResolvedEvent
@@ -30,8 +33,13 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
         });
         result.Events.Add(new PvpResolvedEvent
         {
+            Kind = PvpResolvedEventKind.DeltaPlanBuilt,
+            Text = $"Built delta plan for round {initialSnapshot.RoundIndex}: operations={deltaPlan.Operations.Count}."
+        });
+        result.Events.Add(new PvpResolvedEvent
+        {
             Kind = PvpResolvedEventKind.PredictionBuilt,
-            Text = $"Predicted round {initialSnapshot.RoundIndex} snapshot from execution plan."
+            Text = $"Predicted round {initialSnapshot.RoundIndex} snapshot from delta plan."
         });
 
         foreach (PvpRoundSubmission submission in submissions.OrderBy(submission => submission.PlayerId))
@@ -66,6 +74,18 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
                 {
                     Kind = PvpResolvedEventKind.ActionScheduled,
                     Text = $"Phase {step.Phase} player {step.PlayerId} #{step.Sequence + 1}: {step.ActionType} {step.ModelEntry} -> {step.Target.Kind} [actionId={step.RuntimeActionId?.ToString() ?? "-"}]"
+                });
+            }
+        }
+
+        foreach (IGrouping<PvpResolutionPhase, PvpDeltaOperation> phaseGroup in deltaPlan.Operations.GroupBy(operation => operation.Phase))
+        {
+            foreach (PvpDeltaOperation operation in phaseGroup)
+            {
+                result.Events.Add(new PvpResolvedEvent
+                {
+                    Kind = PvpResolvedEventKind.DeltaOperationScheduled,
+                    Text = $"Delta {operation.Phase} player {operation.SourcePlayerId} #{operation.Sequence + 1}: {operation.Kind} {operation.Amount} -> {operation.TargetKind} via {operation.ModelEntry} [actionId={operation.RuntimeActionId?.ToString() ?? "-"}]"
                 });
             }
         }

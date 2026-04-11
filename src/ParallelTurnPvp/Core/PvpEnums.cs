@@ -53,6 +53,8 @@ public enum PvpResolvedEventKind
 {
     RoundStarted,
     ExecutionPlanBuilt,
+    DeltaPlanBuilt,
+    DeltaOperationScheduled,
     PredictionBuilt,
     PredictionCompared,
     PhaseStarted,
@@ -75,4 +77,15 @@ public enum PvpResolutionPhase
     Resource,
     Attack,
     EndRound
+}
+
+public enum PvpDeltaOperationKind
+{
+    SummonFrontline,
+    GainMaxHp,
+    Heal,
+    GainBlock,
+    Damage,
+    GainResource,
+    EndRoundMarker
 }

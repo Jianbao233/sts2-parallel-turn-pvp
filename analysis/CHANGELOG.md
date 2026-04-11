@@ -1,5 +1,9 @@
 ﻿# CHANGELOG
 
+## 2026-04-11 Delta Plan Bridge
+- added PvpDeltaPlanner so RoundExecutionPlan now compiles into a structured RoundDeltaPlan
+- prediction now runs from delta operations rather than directly interpreting card ids in the prediction engine
+- resolver now emits delta-plan and delta-operation events, making the future delayed-apply seam explicit in logs and round summaries
 ## 2026-04-11 Prediction Bridge
 - added PvpPredictionEngine so RoundExecutionPlan now produces a predicted end-of-round snapshot without touching vanilla live combat
 - PvpRoundResult now carries PredictedFinalSnapshot alongside InitialSnapshot, FinalSnapshot, and ExecutionPlan
@@ -42,4 +46,5 @@
 - added PvpExecutionPlanner and RoundExecutionPlan so resolver now groups planned actions into execution phases before generating summaries
 
 - added secondary-machine workflow: optional direct deploy to \\DESKTOP-U51KJJ2\Mods and direct log pull from \\DESKTOP-U51KJJ2\SlayTheSpire2\logs
+
 
