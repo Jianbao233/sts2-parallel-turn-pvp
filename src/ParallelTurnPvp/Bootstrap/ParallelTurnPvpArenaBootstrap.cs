@@ -36,8 +36,11 @@ namespace ParallelTurnPvp.Bootstrap;
 public static class ParallelTurnPvpArenaBootstrap
 {
     private const string DebugScreenMetaKey = "ParallelTurnPvpDebug";
+    private const string AutoHostArg = "parallelturnpvphost";
     private static bool _pendingHostDebugStart;
+    private static bool _pendingAutoHostDebugStartConsumed;
     private static readonly ConditionalWeakTable<RunState, ArenaPreparationState> PreparationStates = new();
+    private static readonly HashSet<string> LoggedVersionMismatchMessages = new(StringComparer.Ordinal);
 
     public static bool IsDebugModifier(ModifierModel modifier)
     {
@@ -51,9 +54,19 @@ public static class ParallelTurnPvpArenaBootstrap
 
     public static IReadOnlyList<ModifierModel> CreateLockedModifierList()
     {
+        ModifierModel modifierModel = ModelDb.Modifier<ParallelTurnPvpDebugModifier>().ToMutable();
+        if (modifierModel is ParallelTurnPvpDebugModifier modifier)
+        {
+            modifier.ProtocolVersionField = ParallelTurnPvpMod.ProtocolVersion;
+            modifier.ContentVersionField = ParallelTurnPvpMod.ContentVersion;
+            modifier.LiveDelayedApplyEnabledField = PvpDelayedExecution.IsLiveDelayedApplyEnabled;
+            modifier.SplitRoomEnabledField = PvpSplitRoomConfig.IsSplitRoomEnabled;
+            modifier.ClientReadOnlyResolveEnabledField = PvpResolveConfig.IsClientReadOnlyResolveEnabled;
+        }
+
         return new List<ModifierModel>
         {
-            ModelDb.Modifier<ParallelTurnPvpDebugModifier>().ToMutable()
+            modifierModel
         };
     }
 
@@ -61,6 +74,7 @@ public static class ParallelTurnPvpArenaBootstrap
     {
         Log.Info("[ParallelTurnPvp] Requested debug host flow from multiplayer submenu.");
         DirectConnectIpCompat.TryEnableEnetHostMode();
+        DirectConnectIpCompat.TryPatchRunningRejoinPath(new Harmony(ParallelTurnPvpMod.ModId));
         _pendingHostDebugStart = true;
         try
         {
@@ -88,6 +102,18 @@ public static class ParallelTurnPvpArenaBootstrap
         return true;
     }
 
+    public static bool ConsumePendingAutoHostDebugStart()
+    {
+        if (_pendingAutoHostDebugStartConsumed || !CommandLineHelper.HasArg(AutoHostArg))
+        {
+            return false;
+        }
+
+        _pendingAutoHostDebugStartConsumed = true;
+        Log.Info("[ParallelTurnPvp] Consumed command line auto-host flag for local PvP fastmp flow.");
+        return true;
+    }
+
     public static void ConfigureCustomLobbyScreen(NCustomRunScreen screen, bool forceDebug = false)
     {
         PvpNetBridge.EnsureRegistered();
@@ -110,15 +136,16 @@ public static class ParallelTurnPvpArenaBootstrap
             return;
         }
 
-        Log.Info($"[ParallelTurnPvp] Configuring debug custom run screen. forceDebug={forceDebug}, netType={lobby.NetService.Type}");
+        Log.Info($"[ParallelTurnPvp] Configuring debug custom run screen. forceDebug={forceDebug}, netType={lobby.NetService.Type}, liveDelayed={(PvpDelayedExecution.IsLiveDelayedApplyEnabled ? "on" : "off")}, splitRoom={(PvpSplitRoomConfig.IsSplitRoomEnabled ? "on" : "off")}, clientReadOnlyResolve={(PvpResolveConfig.IsClientReadOnlyResolveEnabled ? "on" : "off")}");
         ForceLocalCharacter(lobby);
-        GetNodeOrNull<MegaLabel>(screen, "%CustomModeTitle")?.SetTextAutoSize("ParallelTurn PvP");
+        MegaLabel? titleLabel = GetNodeOrNull<MegaLabel>(screen, "%CustomModeTitle");
+        titleLabel?.SetTextAutoSize("ParallelTurn PvP");
         HideNode(screen, "%AscensionPanel");
         HideNode(screen, "%ModifiersList");
-        HideNode(screen, "%ModifiersTitle");
         HideNode(screen, "%ModifiersHotkeyIcon");
         HideNode(screen, "%SeedInput");
         HideNode(screen, "%SeedLabel");
+        ApplyDebugVersionStatus(screen, lobby, titleLabel);
     }
 
     public static bool IsDebugScreen(Node screen)
@@ -133,6 +160,34 @@ public static class ParallelTurnPvpArenaBootstrap
         {
             lobby.SetLocalCharacter(ModelDb.Character<Necrobinder>());
         }
+    }
+
+    public static bool TryGetDebugVersionMismatch(IReadOnlyList<ModifierModel> modifiers, out string message)
+    {
+        message = string.Empty;
+        if (modifiers.OfType<ParallelTurnPvpDebugModifier>().FirstOrDefault() is not { } modifier)
+        {
+            return false;
+        }
+
+        bool protocolMatches = modifier.ProtocolVersionField == ParallelTurnPvpMod.ProtocolVersion;
+        bool contentMatches = modifier.ContentVersionField == ParallelTurnPvpMod.ContentVersion;
+        bool delayedModeMatches = modifier.LiveDelayedApplyEnabledField == PvpDelayedExecution.IsLiveDelayedApplyEnabled;
+        bool splitRoomMatches = modifier.SplitRoomEnabledField == PvpSplitRoomConfig.IsSplitRoomEnabled;
+        bool readOnlyResolveMatches = modifier.ClientReadOnlyResolveEnabledField == PvpResolveConfig.IsClientReadOnlyResolveEnabled;
+        if (protocolMatches && contentMatches && delayedModeMatches && splitRoomMatches && readOnlyResolveMatches)
+        {
+            return false;
+        }
+
+        string hostDelayed = modifier.LiveDelayedApplyEnabledField ? "on" : "off";
+        string localDelayed = PvpDelayedExecution.IsLiveDelayedApplyEnabled ? "on" : "off";
+        string hostSplitRoom = modifier.SplitRoomEnabledField ? "on" : "off";
+        string localSplitRoom = PvpSplitRoomConfig.IsSplitRoomEnabled ? "on" : "off";
+        string hostReadOnlyResolve = modifier.ClientReadOnlyResolveEnabledField ? "on" : "off";
+        string localReadOnlyResolve = PvpResolveConfig.IsClientReadOnlyResolveEnabled ? "on" : "off";
+        message = $"Version mismatch: host P{modifier.ProtocolVersionField}/C{modifier.ContentVersionField}/D{hostDelayed}/R{hostSplitRoom}/O{hostReadOnlyResolve}, local P{ParallelTurnPvpMod.ProtocolVersion}/C{ParallelTurnPvpMod.ContentVersion}/D{localDelayed}/R{localSplitRoom}/O{localReadOnlyResolve}";
+        return true;
     }
 
     public static async Task RunPreparationAsync(EventModel eventModel)
@@ -166,6 +221,35 @@ public static class ParallelTurnPvpArenaBootstrap
         }
 
         await EnterCombatFromNeowAsync(eventModel, runState);
+    }
+
+    public static async Task<bool> TryEnterCombatFromCurrentNeowAsync(RunState runState, string sourceTag)
+    {
+        if (runState.CurrentRoom is CombatRoom)
+        {
+            Log.Info($"[ParallelTurnPvp] Rejoin combat bridge skipped: already in combat room. source={sourceTag}");
+            return true;
+        }
+
+        if (runState.CurrentRoom is not EventRoom eventRoom)
+        {
+            string roomType = runState.CurrentRoom?.GetType().Name ?? "null";
+            Log.Warn($"[ParallelTurnPvp] Rejoin combat bridge skipped: current room is not EventRoom. source={sourceTag} room={roomType}");
+            return false;
+        }
+
+        EventModel? eventModel = eventRoom.LocalMutableEvent ?? eventRoom.CanonicalEvent;
+        if (eventModel is not Neow)
+        {
+            string eventType = eventModel?.GetType().Name ?? "null";
+            Log.Warn($"[ParallelTurnPvp] Rejoin combat bridge skipped: current event is not Neow. source={sourceTag} event={eventType}");
+            return false;
+        }
+
+        await EnterCombatFromNeowAsync(eventModel, runState);
+        bool inCombat = CombatManager.Instance.IsInProgress || runState.CurrentRoom is CombatRoom;
+        Log.Info($"[ParallelTurnPvp] Rejoin combat bridge completed. source={sourceTag} inCombat={inCombat}");
+        return inCombat;
     }
 
     public static void PrepareLoadout(Player player)
@@ -284,6 +368,32 @@ public static class ParallelTurnPvpArenaBootstrap
     private static T? GetNodeOrNull<T>(Node owner, string path) where T : Node
     {
         return owner.HasNode(path) ? owner.GetNode<T>(path) : null;
+    }
+
+    private static void ApplyDebugVersionStatus(NCustomRunScreen screen, StartRunLobby lobby, MegaLabel? titleLabel)
+    {
+        bool hasMismatch = TryGetDebugVersionMismatch(lobby.Modifiers, out string mismatchMessage);
+        if (titleLabel != null)
+        {
+            titleLabel.SetTextAutoSize(hasMismatch ? $"ParallelTurn PvP [{mismatchMessage}]" : "ParallelTurn PvP");
+        }
+
+        GetNodeOrNull<NConfirmButton>(screen, "ConfirmButton")?.SetEnabled(!hasMismatch);
+
+        MegaLabel? modifiersTitle = GetNodeOrNull<MegaLabel>(screen, "%ModifiersTitle");
+        if (modifiersTitle != null)
+        {
+            modifiersTitle.Visible = hasMismatch;
+            if (hasMismatch)
+            {
+                modifiersTitle.SetTextAutoSize(mismatchMessage);
+            }
+        }
+
+        if (hasMismatch && LoggedVersionMismatchMessages.Add(mismatchMessage))
+        {
+            Log.Error($"[ParallelTurnPvp] {mismatchMessage}. Blocking ready until both sides use the same mod build.");
+        }
     }
 
     private sealed class ArenaPreparationState

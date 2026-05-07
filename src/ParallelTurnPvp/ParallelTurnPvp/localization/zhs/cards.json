@@ -1,6 +1,6 @@
 ﻿{
   "FRONTLINE_BRACE.title": "前线固守",
-  "FRONTLINE_BRACE.description": "使你的[gold]前线[/gold]获得 {Block:diff()} 点[gold]格挡[/gold]。若前线不存在，则改为自己获得。",
+  "FRONTLINE_BRACE.description": "你的[gold]前线[/gold]获得 {Block:diff()} 点[gold]格挡[/gold]。若没有[gold]前线[/gold]，则改为本体获得。",
   "BREAK_FORMATION.title": "破阵打击",
   "BREAK_FORMATION.description": "造成 {Damage:diff()} 点伤害。敌方[gold]前线[/gold]会优先承伤。"
 }

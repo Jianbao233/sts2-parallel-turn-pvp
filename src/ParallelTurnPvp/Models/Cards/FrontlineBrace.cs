@@ -37,8 +37,7 @@ public sealed class FrontlineBrace : CardModel
             return;
         }
 
-        var target = ParallelTurnFrontlineHelper.GetFrontline(Owner) ?? Owner.Creature;
-        await CreatureCmd.GainBlock(target, DynamicVars.Block, cardPlay, false);
+        await CreatureCmd.GainBlock(ParallelTurnFrontlineHelper.GetFrontline(Owner) ?? Owner.Creature, DynamicVars.Block, cardPlay, false);
     }
 
     protected override void OnUpgrade()

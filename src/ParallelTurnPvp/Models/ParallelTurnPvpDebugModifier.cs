@@ -45,6 +45,15 @@ public sealed class ParallelTurnPvpDebugModifier : ModifierModel
     [SavedProperty(SerializationCondition.AlwaysSave, 4)]
     public int CurrentRoundIndex { get; set; } = 1;
 
+    [SavedProperty(SerializationCondition.AlwaysSave, 5)]
+    public bool LiveDelayedApplyEnabledField { get; set; } = PvpDelayedExecution.IsLiveDelayedApplyEnabled;
+
+    [SavedProperty(SerializationCondition.AlwaysSave, 6)]
+    public bool SplitRoomEnabledField { get; set; } = PvpSplitRoomConfig.IsSplitRoomEnabled;
+
+    [SavedProperty(SerializationCondition.AlwaysSave, 7)]
+    public bool ClientReadOnlyResolveEnabledField { get; set; } = PvpResolveConfig.IsClientReadOnlyResolveEnabled;
+
     public override bool ClearsPlayerDeck => true;
 
     public override LocString Title => new("modifiers", "ParallelTurnPvP_Debug.title");
@@ -80,5 +89,8 @@ public sealed class ParallelTurnPvpDebugModifier : ModifierModel
         MatchEnded = false;
         WinnerNetId = 0;
         CurrentRoundIndex = 1;
+        LiveDelayedApplyEnabledField = PvpDelayedExecution.IsLiveDelayedApplyEnabled;
+        SplitRoomEnabledField = PvpSplitRoomConfig.IsSplitRoomEnabled;
+        ClientReadOnlyResolveEnabledField = PvpResolveConfig.IsClientReadOnlyResolveEnabled;
     }
 }

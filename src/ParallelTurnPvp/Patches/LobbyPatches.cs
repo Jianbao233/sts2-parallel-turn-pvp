@@ -11,6 +11,7 @@ using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using ParallelTurnPvp.Bootstrap;
+using System.Threading.Tasks;
 
 namespace ParallelTurnPvp.Patches;
 
@@ -18,11 +19,37 @@ namespace ParallelTurnPvp.Patches;
 public static class AddParallelTurnMainMultiplayerButtonPatch
 {
     private const string ButtonName = "ParallelTurnPvpButton";
+    private const int AutoHostStartDelayMs = 800;
 
     static void Postfix(NMultiplayerSubmenu __instance)
     {
         InjectButton(__instance);
         SyncButtonVisibility(__instance);
+
+        if (ParallelTurnPvpArenaBootstrap.ConsumePendingAutoHostDebugStart())
+        {
+            Log.Info("[ParallelTurnPvp] Auto-starting local ParallelTurn PvP host from command line.");
+            TaskHelper.RunSafely(AutoStartHostAfterReadyAsync(__instance));
+        }
+    }
+
+    private static async Task AutoStartHostAfterReadyAsync(NMultiplayerSubmenu submenu)
+    {
+        await Task.Delay(AutoHostStartDelayMs);
+        if (!GodotObject.IsInstanceValid(submenu))
+        {
+            return;
+        }
+
+        Control? loadingOverlay = submenu.GetNodeOrNull<Control>("%LoadingOverlay");
+        NSubmenuStack? stack = Traverse.Create(submenu).Field("_stack").GetValue<NSubmenuStack>();
+        if (loadingOverlay == null || stack == null)
+        {
+            Log.Warn($"[ParallelTurnPvp] Auto-host aborted: multiplayer submenu not fully ready. loadingOverlay={(loadingOverlay != null)} stack={(stack != null)}");
+            return;
+        }
+
+        await ParallelTurnPvpArenaBootstrap.StartHostDebugAsync(loadingOverlay, stack);
     }
 
     internal static void InjectButton(NMultiplayerSubmenu submenu)
@@ -150,11 +177,26 @@ public static class LockParallelTurnModifierPatch
 [HarmonyPatch(typeof(StartRunLobby), nameof(StartRunLobby.SetReady))]
 public static class ForceNecrobinderOnReadyPatch
 {
-    static void Prefix(StartRunLobby __instance)
+    static bool Prefix(StartRunLobby __instance, bool ready)
     {
+        if (ready &&
+            ParallelTurnPvpArenaBootstrap.IsDebugLobby(__instance) &&
+            ParallelTurnPvpArenaBootstrap.TryGetDebugVersionMismatch(__instance.Modifiers, out string mismatchMessage))
+        {
+            Log.Error($"[ParallelTurnPvp] Refused ready due to version mismatch. {mismatchMessage}");
+            if (__instance.LobbyListener is NCustomRunScreen screen)
+            {
+                ParallelTurnPvpArenaBootstrap.ConfigureCustomLobbyScreen(screen);
+            }
+
+            return false;
+        }
+
         if (ParallelTurnPvpArenaBootstrap.IsDebugLobby(__instance))
         {
             ParallelTurnPvpArenaBootstrap.ForceLocalCharacter(__instance);
         }
+
+        return true;
     }
 }

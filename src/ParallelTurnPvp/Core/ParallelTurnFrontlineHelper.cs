@@ -3,11 +3,24 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models.Monsters;
+using MegaCrit.Sts2.Core.Runs;
+using ParallelTurnPvp.Models;
 
 namespace ParallelTurnPvp.Core;
 
 public static class ParallelTurnFrontlineHelper
 {
+    public static bool IsSplitRoomActive(IRunState? runState)
+    {
+        if (runState == null)
+        {
+            return false;
+        }
+
+        ParallelTurnPvpDebugModifier? modifier = runState.Modifiers.OfType<ParallelTurnPvpDebugModifier>().FirstOrDefault();
+        return modifier is { SplitRoomEnabledField: true };
+    }
+
     public static Creature? GetFrontline(Player player)
     {
         if (player.IsOstyAlive)
@@ -57,6 +70,15 @@ public static class ParallelTurnFrontlineHelper
 
     public static IReadOnlyList<Creature> GetSelectableEnemyTargets(CombatState combatState, Player viewer)
     {
+        if (IsSplitRoomActive(viewer.RunState))
+        {
+            Creature? dummy = combatState.Creatures.FirstOrDefault(candidate => IsDebugArenaDummy(candidate) && candidate.IsAlive);
+            if (dummy != null)
+            {
+                return [dummy];
+            }
+        }
+
         List<Creature> targets = [];
         foreach (Player opponent in combatState.Players.Where(player => player != viewer))
         {
@@ -64,7 +86,6 @@ public static class ParallelTurnFrontlineHelper
             if (frontline != null && frontline.IsAlive)
             {
                 targets.Add(frontline);
-                continue;
             }
 
             if (opponent.Creature.IsAlive)
@@ -78,9 +99,14 @@ public static class ParallelTurnFrontlineHelper
 
     public static bool IsSelectableEnemyTarget(Player viewer, Creature candidate)
     {
-        if (!candidate.IsAlive || IsDebugArenaDummy(candidate))
+        if (!candidate.IsAlive)
         {
             return false;
+        }
+
+        if (IsDebugArenaDummy(candidate))
+        {
+            return IsSplitRoomActive(viewer.RunState);
         }
 
         Player? owner = GetOwner(candidate);
@@ -92,7 +118,9 @@ public static class ParallelTurnFrontlineHelper
         Creature? frontline = GetFrontline(owner);
         if (candidate.IsPlayer)
         {
-            return frontline == null || !frontline.IsAlive;
+            // Shared-combat mainline allows explicitly choosing enemy hero even when frontline exists.
+            // Whether hero damage is intercepted is decided by the resolver, not by UI target gating.
+            return true;
         }
 
         return candidate.PetOwner == owner && frontline == candidate;
@@ -103,6 +131,24 @@ public static class ParallelTurnFrontlineHelper
         if (target == null)
         {
             return new PvpTargetRef { OwnerPlayerId = actor.NetId, Kind = PvpTargetKind.None };
+        }
+
+        if (IsDebugArenaDummy(target) && IsSplitRoomActive(actor.RunState))
+        {
+            Player? opponent = actor.RunState.Players.FirstOrDefault(player => player.NetId != actor.NetId);
+            if (opponent == null)
+            {
+                return new PvpTargetRef { OwnerPlayerId = actor.NetId, Kind = PvpTargetKind.None };
+            }
+
+            Creature? opponentFrontline = GetFrontline(opponent);
+            return new PvpTargetRef
+            {
+                OwnerPlayerId = opponent.NetId,
+                Kind = opponentFrontline != null && opponentFrontline.IsAlive
+                    ? PvpTargetKind.EnemyFrontline
+                    : PvpTargetKind.EnemyHero
+            };
         }
 
         if (target.IsPlayer && target.Player != null)

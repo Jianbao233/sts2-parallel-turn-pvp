@@ -18,8 +18,8 @@ namespace ParallelTurnPvp;
 public static class ParallelTurnPvpMod
 {
     public const string ModId = "ParallelTurnPvp";
-    public const int ProtocolVersion = 1;
-    public const int ContentVersion = 1;
+    public const int ProtocolVersion = 35;
+    public const int ContentVersion = 35;
 
     private static bool _initialized;
 
@@ -35,15 +35,20 @@ public static class ParallelTurnPvpMod
 
         var harmony = new Harmony(ModId);
         harmony.PatchAll();
+        DirectConnectIpCompat.TryPatchRunningRejoinPath(harmony);
 
         ScriptManagerBridge.LookupScriptsInAssembly(typeof(ParallelTurnPvpMod).Assembly);
         PvpNetBridge.EnsureRegistered();
+        if (PvpShopFeatureFlags.IsShopDraftEnabled)
+        {
+            PvpShopNetBridge.EnsureRegistered();
+        }
 
         ModHelper.AddModelToPool(typeof(NecrobinderCardPool), typeof(FrontlineBrace));
         ModHelper.AddModelToPool(typeof(NecrobinderCardPool), typeof(BreakFormation));
         ModHelper.AddModelToPool(typeof(NecrobinderRelicPool), typeof(OpeningSignal));
         ModHelper.AddModelToPool(typeof(NecrobinderPotionPool), typeof(FrontlineSalve));
 
-        Log.Info($"[ParallelTurnPvp] initialized. cards=[{ModelDb.GetId<FrontlineBrace>().Entry}, {ModelDb.GetId<BreakFormation>().Entry}] relics=[{ModelDb.GetId<OpeningSignal>().Entry}] potions=[{ModelDb.GetId<FrontlineSalve>().Entry}]");
+        Log.Info($"[ParallelTurnPvp] initialized. cards=[{ModelDb.GetId<FrontlineBrace>().Entry}, {ModelDb.GetId<BreakFormation>().Entry}] relics=[{ModelDb.GetId<OpeningSignal>().Entry}] potions=[{ModelDb.GetId<FrontlineSalve>().Entry}] splitRoomEnabled={PvpSplitRoomConfig.IsSplitRoomEnabled} clientReadOnlyResolve={PvpResolveConfig.IsClientReadOnlyResolveEnabled}");
     }
 }

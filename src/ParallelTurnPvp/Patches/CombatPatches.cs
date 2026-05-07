@@ -10,9 +10,11 @@ using MegaCrit.Sts2.Core.Hooks;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Powers;
+using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Game.PeerInput;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using ParallelTurnPvp.Core;
@@ -30,6 +32,41 @@ internal static class ParallelTurnPatchContext
     }
 }
 
+internal static class ParallelTurnMatchStateRegistry
+{
+    private sealed class MatchState
+    {
+        public bool Ended { get; set; }
+    }
+
+    private static readonly ConditionalWeakTable<RunState, MatchState> StateTable = new();
+
+    public static void MarkStarted(RunState runState)
+    {
+        StateTable.GetOrCreateValue(runState).Ended = false;
+    }
+
+    public static void MarkEnded(RunState runState)
+    {
+        StateTable.GetOrCreateValue(runState).Ended = true;
+    }
+
+    public static bool IsEnded(RunState runState)
+    {
+        if (runState == null)
+        {
+            return false;
+        }
+
+        if (StateTable.TryGetValue(runState, out MatchState? state) && state.Ended)
+        {
+            return true;
+        }
+
+        return runState.Modifiers.OfType<ParallelTurnPvpDebugModifier>().FirstOrDefault() is { MatchEnded: true };
+    }
+}
+
 [HarmonyPatch(typeof(CombatManager), nameof(CombatManager.SetUpCombat))]
 public static class ParallelTurnCombatSetupPatch
 {
@@ -41,10 +78,12 @@ public static class ParallelTurnCombatSetupPatch
         }
 
         PvpNetBridge.EnsureRegistered();
-        var runtime = PvpRuntimeRegistry.GetOrCreate(runState);
-        runtime.BeginCombat(state);
-        new PvpNetBridge().BroadcastRoundState(runtime.CurrentRound);
-        new PvpNetBridge().BroadcastPlanningFrame(runtime.BuildPlanningFrame());
+        ParallelTurnMatchStateRegistry.MarkStarted(runState);
+        // Round-1 runtime initialization is intentionally deferred to first tracked action
+        // (lazy init in PvpMatchRuntime.EnsureRoundInitialized). This avoids host/client
+        // timing skew during SetUpCombat where frontline summon state can differ.
+        PvpRuntimeRegistry.GetOrCreate(runState);
+        Log.Info("[ParallelTurnPvp] Deferred round-1 runtime init to first tracked action.");
 
         foreach (var player in state.Players)
         {
@@ -74,7 +113,30 @@ public static class ParallelTurnSwitchSidesPatch
     static void Prefix()
     {
         CombatState? combatState = CombatManager.Instance.DebugOnlyGetState();
-        if (combatState == null || combatState.CurrentSide != CombatSide.Player || PvpRuntimeRegistry.TryGet(combatState) is not { } runtime)
+        if (combatState == null ||
+            combatState.RunState is not RunState runStateForGuard ||
+            PvpRuntimeRegistry.TryGet(combatState) is not { } runtime)
+        {
+            return;
+        }
+
+        if (ParallelTurnMatchStateRegistry.IsEnded(runStateForGuard))
+        {
+            Log.Info("[ParallelTurnPvp] SwitchSides prefix skipped because match has ended.");
+            return;
+        }
+
+        if (RunManager.Instance.NetService.Type == NetGameType.Client)
+        {
+            PvpCombatSnapshot? pendingSnapshot = runtime.ConsumePendingAuthoritativeSnapshot();
+            if (pendingSnapshot != null && combatState.RunState is RunState runStateForSnapshot)
+            {
+                PvpNetBridge.ApplyLiveSnapshot(runStateForSnapshot, pendingSnapshot);
+                Log.Info($"[ParallelTurnPvp] Applied queued authoritative snapshot in SwitchSides prefix. round={pendingSnapshot.RoundIndex} snapshotVersion={pendingSnapshot.SnapshotVersion}");
+            }
+        }
+
+        if (combatState.CurrentSide != CombatSide.Player)
         {
             return;
         }
@@ -83,6 +145,14 @@ public static class ParallelTurnSwitchSidesPatch
         if (!runtime.CanResolveRound(combatState.RoundNumber))
         {
             Log.Info($"[ParallelTurnPvp] SwitchSides prefix skipped resolve. liveRound={combatState.RoundNumber} pvpRound={runtime.CurrentRound.RoundIndex} phase={runtime.CurrentRound.Phase} resolved={runtime.CurrentRound.HasResolved}");
+            return;
+        }
+
+        if (RunManager.Instance.NetService.Type == NetGameType.Client &&
+            ParallelTurnFrontlineHelper.IsSplitRoomActive(runStateForGuard))
+        {
+            runtime.MarkClientAwaitAuthoritativeResult(combatState.RoundNumber, runtime.CurrentRound.SnapshotAtRoundStart.SnapshotVersion);
+            Log.Info($"[ParallelTurnPvp] Client host-authority resolve path. Waiting for host authoritative round result. round={combatState.RoundNumber} snapshotVersion={runtime.CurrentRound.SnapshotAtRoundStart.SnapshotVersion}");
             return;
         }
 
@@ -111,6 +181,12 @@ public static class ParallelTurnSwitchSidesPatch
             return;
         }
 
+        if (ParallelTurnMatchStateRegistry.IsEnded(runState))
+        {
+            Log.Info("[ParallelTurnPvp] SwitchSides postfix skipped because match has ended.");
+            return;
+        }
+
         Log.Info($"[ParallelTurnPvp] SwitchSides postfix currentSide={combatState.CurrentSide} round={combatState.RoundNumber} enemies=[{string.Join(", ", combatState.Enemies.Select(enemy => enemy.ToString()))}]");
         if (combatState.CurrentSide != CombatSide.Player)
         {
@@ -118,6 +194,13 @@ public static class ParallelTurnSwitchSidesPatch
         }
 
         var runtime = PvpRuntimeRegistry.GetOrCreate(runState);
+
+        if (RunManager.Instance.NetService.Type == NetGameType.Client &&
+            ParallelTurnFrontlineHelper.IsSplitRoomActive(runState))
+        {
+            Log.Info($"[ParallelTurnPvp] SwitchSides postfix skipped local round start on client host-authority mode. liveRound={combatState.RoundNumber} pvpRound={runtime.CurrentRound.RoundIndex} phase={runtime.CurrentRound.Phase}");
+            return;
+        }
 
         if (!runtime.ShouldStartRound(combatState.RoundNumber))
         {
@@ -151,6 +234,29 @@ public static class ParallelTurnHoveredModelTrackerGuardPatch
         if (RunManager.Instance.DebugOnlyGetState() is RunState runState && runState.Modifiers.OfType<ParallelTurnPvpDebugModifier>().Any() && __exception is ArgumentOutOfRangeException)
         {
             Log.Warn($"[ParallelTurnPvp] Suppressed HoveredModelTracker out-of-range sync for player {playerId}: {__exception.Message}");
+            return null;
+        }
+
+        return __exception;
+    }
+}
+
+[HarmonyPatch(typeof(NMultiplayerPlayerIntentHandler), "_Process")]
+public static class ParallelTurnRemoteIntentHandlerNullGuardPatch
+{
+    static Exception? Finalizer(Exception? __exception)
+    {
+        if (__exception == null)
+        {
+            return null;
+        }
+
+        if (RunManager.Instance.DebugOnlyGetState() is RunState runState &&
+            runState.Modifiers.OfType<ParallelTurnPvpDebugModifier>().Any() &&
+            ParallelTurnFrontlineHelper.IsSplitRoomActive(runState) &&
+            __exception is NullReferenceException)
+        {
+            Log.Warn($"[ParallelTurnPvp] Suppressed remote intent handler null reference in split-room mode: {__exception.Message}");
             return null;
         }
 
@@ -209,7 +315,7 @@ public static class ParallelTurnCustomWinConditionPatch
             return true;
         }
 
-        if (modifier.MatchEnded)
+        if (ParallelTurnMatchStateRegistry.IsEnded(runState))
         {
             __result = Task.FromResult(true);
             return false;
@@ -223,6 +329,98 @@ public static class ParallelTurnCustomWinConditionPatch
 
         ulong winnerNetId = alivePlayers.Count == 1 ? alivePlayers[0].NetId : 0UL;
         __result = ParallelTurnMatchEndFlow.EndMatchAsync(runState, modifier, winnerNetId, combatState.RoundNumber);
+        return false;
+    }
+}
+
+[HarmonyPatch(typeof(CombatManager), "SwitchFromPlayerToEnemySide")]
+public static class ParallelTurnSkipEnemyTurnAfterMatchEndPatch
+{
+    static bool Prefix(CombatManager __instance, ref Task __result)
+    {
+        if (__instance.DebugOnlyGetState() is not CombatState combatState ||
+            combatState.RunState is not RunState runState ||
+            !runState.Modifiers.OfType<ParallelTurnPvpDebugModifier>().Any() ||
+            !ParallelTurnMatchStateRegistry.IsEnded(runState))
+        {
+            return true;
+        }
+
+        __result = Task.CompletedTask;
+        Log.Info("[ParallelTurnPvp] Skipped SwitchFromPlayerToEnemySide after match end.");
+        return false;
+    }
+}
+
+[HarmonyPatch(typeof(CombatManager), "StartTurn")]
+public static class ParallelTurnSuppressMatchEndStartTurnErrorPatch
+{
+    private static bool IsDebugArenaRun(CombatManager manager, out RunState? runState)
+    {
+        runState = null;
+        if (manager.DebugOnlyGetState() is not CombatState combatState ||
+            combatState.RunState is not RunState state ||
+            !state.Modifiers.OfType<ParallelTurnPvpDebugModifier>().Any())
+        {
+            return false;
+        }
+
+        runState = state;
+        return true;
+    }
+
+    static bool Prefix(CombatManager __instance, ref Task __result)
+    {
+        if (!IsDebugArenaRun(__instance, out RunState? runState) ||
+            runState == null ||
+            !ParallelTurnMatchStateRegistry.IsEnded(runState))
+        {
+            return true;
+        }
+
+        __result = Task.CompletedTask;
+        Log.Info("[ParallelTurnPvp] Skipped StartTurn after match end.");
+        return false;
+    }
+
+    static Exception? Finalizer(CombatManager __instance, Exception? __exception)
+    {
+        if (__exception == null)
+        {
+            return null;
+        }
+
+        if (!IsDebugArenaRun(__instance, out RunState? runState) || runState == null)
+        {
+            return __exception;
+        }
+
+        if (__exception is InvalidOperationException && __exception.Message.Contains("Nullable object", StringComparison.OrdinalIgnoreCase))
+        {
+            bool matchEnded = ParallelTurnMatchStateRegistry.IsEnded(runState);
+            Log.Warn($"[ParallelTurnPvp] Suppressed StartTurn nullable exception in debug arena. matchEnded={matchEnded} message={__exception.Message}");
+            return null;
+        }
+
+        return __exception;
+    }
+}
+
+[HarmonyPatch(typeof(CombatManager), "SetupPlayerTurn")]
+public static class ParallelTurnSkipSetupPlayerTurnAfterMatchEndPatch
+{
+    static bool Prefix(CombatManager __instance, ref Task __result)
+    {
+        if (__instance.DebugOnlyGetState() is not CombatState combatState ||
+            combatState.RunState is not RunState runState ||
+            !runState.Modifiers.OfType<ParallelTurnPvpDebugModifier>().Any() ||
+            !ParallelTurnMatchStateRegistry.IsEnded(runState))
+        {
+            return true;
+        }
+
+        __result = Task.CompletedTask;
+        Log.Info("[ParallelTurnPvp] Skipped SetupPlayerTurn after match end.");
         return false;
     }
 }
@@ -396,7 +594,7 @@ public static class ParallelTurnPreventAutoCombatEndPatch
             return;
         }
 
-        if (modifier.MatchEnded)
+        if (ParallelTurnMatchStateRegistry.IsEnded(runState))
         {
             Log.Info($"[ParallelTurnPvp] Debug match already ended. allowing combat end check to continue. winner={modifier.WinnerNetId}");
             return;
@@ -454,6 +652,7 @@ internal static class ParallelTurnCombatVisualLayout
     private const float LocalRetreatX = -20f;
     private const float RemoteRetreatX = 60f;
     private const float LocalPetSpacingScale = 2f / 3f;
+    private static readonly Vector2 SplitRoomDummyPosition = new(560f, 188f);
     private static readonly ConditionalWeakTable<NCreature, BasePositionHolder> BasePositions = new();
 
     public static void Apply(NCombatRoom room)
@@ -472,6 +671,13 @@ internal static class ParallelTurnCombatVisualLayout
         }
 
         List<NCreature> nodes = room.CreatureNodes.ToList();
+        bool splitRoomActive = ParallelTurnFrontlineHelper.IsSplitRoomActive(runState);
+        if (splitRoomActive)
+        {
+            ApplySplitRoomLayout(room, enemyContainer, nodes);
+            return;
+        }
+
         foreach (NCreature dummy in nodes.Where(node => ParallelTurnFrontlineHelper.IsDebugArenaDummy(node.Entity)))
         {
             dummy.Hide();
@@ -565,6 +771,85 @@ internal static class ParallelTurnCombatVisualLayout
         }
     }
 
+    private static void ApplySplitRoomLayout(NCombatRoom room, Node enemyContainer, List<NCreature> nodes)
+    {
+        List<NCreature> localPlayers = nodes
+            .Where(node => node.Entity.IsPlayer && node.Entity.Player != null && LocalContext.IsMe(node.Entity.Player))
+            .OrderBy(node => node.Entity.Player!.NetId)
+            .ToList();
+        HashSet<ulong> localPlayerIds = localPlayers
+            .Select(node => node.Entity.Player!.NetId)
+            .ToHashSet();
+
+        foreach (NCreature localPlayer in localPlayers)
+        {
+            localPlayer.Show();
+            localPlayer.ToggleIsInteractable(true);
+            localPlayer.Visuals.Bounds.Visible = true;
+
+            if (!TryGetBasePosition(localPlayer, out _))
+            {
+                continue;
+            }
+
+            List<NCreature> localPets = nodes
+                .Where(node => node.Entity.PetOwner == localPlayer.Entity.Player && node.Entity.IsAlive)
+                .OrderBy(node => node.Entity.Monster is null ? 1 : 0)
+                .ToList();
+
+            ApplyRetreatOffset(localPlayer, Vector2.Left * LocalRetreatX);
+            foreach (NCreature pet in localPets)
+            {
+                pet.Show();
+                pet.ToggleIsInteractable(true);
+                pet.Visuals.Bounds.Visible = true;
+                if (!TryGetBasePosition(pet, out _))
+                {
+                    continue;
+                }
+
+                ApplyScaledCompanionOffset(localPlayer, pet, Vector2.Left * LocalRetreatX, LocalPetSpacingScale);
+            }
+
+            Log.Info($"[ParallelTurnPvp] Split-room visual: positioned local player {localPlayer.Entity} with {localPets.Count} pets.");
+        }
+
+        foreach (NCreature dummy in nodes.Where(node => ParallelTurnFrontlineHelper.IsDebugArenaDummy(node.Entity)))
+        {
+            EnsureParent(dummy, enemyContainer);
+            dummy.Show();
+            dummy.ToggleIsInteractable(true);
+            dummy.Visuals.Bounds.Visible = true;
+            EnsureFacingLeft(dummy);
+            dummy.Position = SplitRoomDummyPosition;
+            Log.Info($"[ParallelTurnPvp] Split-room visual: enabled dummy target {dummy.Entity} at {dummy.Position}.");
+        }
+
+        foreach (NCreature node in nodes.Where(node => IsRemoteOwnedCreature(node, localPlayerIds)))
+        {
+            node.Hide();
+            node.ToggleIsInteractable(false);
+            node.Visuals.Bounds.Visible = false;
+        }
+
+        Log.Info($"[ParallelTurnPvp] Split-room visual layout applied. localPlayers={localPlayers.Count} hiddenRemote={nodes.Count(node => IsRemoteOwnedCreature(node, localPlayerIds))}");
+    }
+
+    private static bool IsRemoteOwnedCreature(NCreature node, HashSet<ulong> localPlayerIds)
+    {
+        if (node.Entity.IsPlayer && node.Entity.Player != null)
+        {
+            return !localPlayerIds.Contains(node.Entity.Player.NetId);
+        }
+
+        if (node.Entity.PetOwner != null)
+        {
+            return !localPlayerIds.Contains(node.Entity.PetOwner.NetId);
+        }
+
+        return false;
+    }
+
     private static void EnsureParent(Node node, Node expectedParent)
     {
         if (node.GetParent() == expectedParent)
@@ -646,8 +931,15 @@ internal static class ParallelTurnMatchEndFlow
 
         try
         {
+            ParallelTurnMatchStateRegistry.MarkEnded(runState);
             modifier.MatchEnded = true;
             modifier.WinnerNetId = winnerNetId;
+            if (PvpRuntimeRegistry.TryGet(runState) is { } runtime)
+            {
+                runtime.CurrentRound.Phase = PvpMatchPhase.MatchEnd;
+                runtime.CurrentRound.HasResolved = true;
+                runtime.CurrentRound.PendingAuthoritativeSnapshot = null;
+            }
 
             ulong localNetId = LocalContext.GetMe(runState)?.NetId ?? 0UL;
             bool isVictory = winnerNetId != 0UL && localNetId == winnerNetId;

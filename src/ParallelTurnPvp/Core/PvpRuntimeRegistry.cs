@@ -22,4 +22,14 @@ public static class PvpRuntimeRegistry
 
         return Table.TryGetValue(runState, out var runtime) ? runtime : null;
     }
+
+    public static PvpMatchRuntime? TryGet(RunState? runState)
+    {
+        if (runState == null)
+        {
+            return null;
+        }
+
+        return Table.TryGetValue(runState, out var runtime) ? runtime : null;
+    }
 }

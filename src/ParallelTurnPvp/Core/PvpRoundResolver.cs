@@ -4,7 +4,10 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
 {
     private readonly IPvpExecutionPlanner _planner = new PvpExecutionPlanner();
     private readonly IPvpDeltaPlanner _deltaPlanner = new PvpDeltaPlanner();
+    private readonly IPvpDelayedPlanner _delayedPlanner = new PvpDelayedPlanner();
+    private readonly IPvpDelayedCommandPlanner _delayedCommandPlanner = new PvpDelayedCommandPlanner();
     private readonly IPvpPredictionEngine _predictionEngine = new PvpPredictionEngine();
+    private readonly IPvpPlaybackPlanner _playbackPlanner = new PvpPlaybackPlanner();
 
     public PvpRoundResult Resolve(PvpCombatSnapshot initialSnapshot, IReadOnlyList<PvpRoundSubmission> submissions, PvpCombatSnapshot finalSnapshot)
     {
@@ -16,10 +19,16 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
         };
         PvpRoundExecutionPlan plan = _planner.BuildPlan(initialSnapshot.RoundIndex, submissions);
         PvpRoundDeltaPlan deltaPlan = _deltaPlanner.BuildDeltaPlan(initialSnapshot, plan);
+        PvpRoundDelayedPlan delayedPlan = _delayedPlanner.BuildDelayedPlan(initialSnapshot, deltaPlan);
+        PvpRoundDelayedCommandPlan delayedCommandPlan = _delayedCommandPlanner.BuildCommandPlan(initialSnapshot, delayedPlan);
         PvpCombatSnapshot predictedSnapshot = _predictionEngine.Predict(initialSnapshot, deltaPlan);
+        PvpRoundPlaybackPlan playbackPlan = _playbackPlanner.BuildPlaybackPlan(initialSnapshot, plan, deltaPlan, finalSnapshot);
         result.ExecutionPlan = plan;
         result.DeltaPlan = deltaPlan;
+        result.DelayedPlan = delayedPlan;
+        result.DelayedCommandPlan = delayedCommandPlan;
         result.PredictedFinalSnapshot = predictedSnapshot;
+        result.PlaybackPlan = playbackPlan;
 
         result.Events.Add(new PvpResolvedEvent
         {
@@ -38,8 +47,23 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
         });
         result.Events.Add(new PvpResolvedEvent
         {
+            Kind = PvpResolvedEventKind.DelayedPlanBuilt,
+            Text = $"Built delayed plan for round {initialSnapshot.RoundIndex}: candidates={delayedPlan.Operations.Count}."
+        });
+        result.Events.Add(new PvpResolvedEvent
+        {
+            Kind = PvpResolvedEventKind.DelayedCommandPlanBuilt,
+            Text = $"Built delayed command plan for round {initialSnapshot.RoundIndex}: commands={delayedCommandPlan.Commands.Count}."
+        });
+        result.Events.Add(new PvpResolvedEvent
+        {
             Kind = PvpResolvedEventKind.PredictionBuilt,
             Text = $"Predicted round {initialSnapshot.RoundIndex} snapshot from delta plan."
+        });
+        result.Events.Add(new PvpResolvedEvent
+        {
+            Kind = PvpResolvedEventKind.PlaybackPlanBuilt,
+            Text = $"Built playback plan for round {initialSnapshot.RoundIndex}: events={playbackPlan.Events.Count}, frames={playbackPlan.Frames.Count}."
         });
 
         foreach (PvpRoundSubmission submission in submissions.OrderBy(submission => submission.PlayerId))
@@ -90,6 +114,33 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
             }
         }
 
+        foreach (PvpDelayedCandidateOperation operation in delayedPlan.Operations)
+        {
+            result.Events.Add(new PvpResolvedEvent
+            {
+                Kind = PvpResolvedEventKind.DelayedCandidateScheduled,
+                Text = $"Delayed {operation.Phase} player {operation.SourcePlayerId} #{operation.Sequence + 1}: {operation.Kind} {operation.Amount} -> {operation.TargetKind} via {operation.ModelEntry} [actionId={operation.RuntimeActionId?.ToString() ?? "-"}]"
+            });
+        }
+
+        foreach (PvpDelayedCommand command in delayedCommandPlan.Commands)
+        {
+            result.Events.Add(new PvpResolvedEvent
+            {
+                Kind = PvpResolvedEventKind.DelayedCommandScheduled,
+                Text = $"DelayedCommand {command.Phase} player {command.SourcePlayerId} #{command.Sequence + 1}: {command.Kind} {command.Amount} -> {command.TargetKind} via {command.ModelEntry} [actionId={command.RuntimeActionId?.ToString() ?? "-"}] executor={command.ExecutorHint}"
+            });
+        }
+
+        foreach (PvpPlaybackEvent playbackEvent in playbackPlan.Events)
+        {
+            result.Events.Add(new PvpResolvedEvent
+            {
+                Kind = PvpResolvedEventKind.PlaybackEventScheduled,
+                Text = $"Playback {playbackEvent.Phase} #{playbackEvent.Sequence + 1}: {playbackEvent.Kind} {playbackEvent.Amount} -> {playbackEvent.TargetKind} via {playbackEvent.ModelEntry} [actionId={playbackEvent.RuntimeActionId?.ToString() ?? "-"}]"
+            });
+        }
+
         AppendCreatureDeltaEvents(
             result,
             initialSnapshot.Heroes,
@@ -108,13 +159,15 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
             result,
             predictedSnapshot.Heroes,
             finalSnapshot.Heroes,
-            "Hero");
+            "Hero",
+            deltaPlan.Operations);
 
         AppendPredictionComparisonEvents(
             result,
             predictedSnapshot.Frontlines,
             finalSnapshot.Frontlines,
-            "Frontline");
+            "Frontline",
+            deltaPlan.Operations);
 
         AppendCreatureDeltaEvents(
             result,
@@ -180,7 +233,8 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
         PvpRoundResult result,
         IReadOnlyDictionary<ulong, PvpCreatureSnapshot> predictedSnapshots,
         IReadOnlyDictionary<ulong, PvpCreatureSnapshot> finalSnapshots,
-        string label)
+        string label,
+        IReadOnlyList<PvpDeltaOperation> operations)
     {
         foreach (ulong playerId in predictedSnapshots.Keys.Union(finalSnapshots.Keys).OrderBy(id => id))
         {
@@ -208,6 +262,53 @@ public sealed class PvpRoundResolver : IPvpRoundResolver
                 Kind = PvpResolvedEventKind.PredictionCompared,
                 Text = $"{label} {playerId} prediction drift: predicted exists={predicted.Exists} hp {predicted.CurrentHp}/{predicted.MaxHp} block {predicted.Block}, actual exists={actual.Exists} hp {actual.CurrentHp}/{actual.MaxHp} block {actual.Block}"
             });
+
+            string trace = BuildPredictionTrace(label, playerId, operations);
+            if (!string.IsNullOrEmpty(trace))
+            {
+                result.Events.Add(new PvpResolvedEvent
+                {
+                    Kind = PvpResolvedEventKind.PredictionCompared,
+                    Text = trace
+                });
+            }
         }
+    }
+
+    private static string BuildPredictionTrace(string label, ulong playerId, IReadOnlyList<PvpDeltaOperation> operations)
+    {
+        PvpTargetKind primaryTarget = label == "Frontline" ? PvpTargetKind.SelfFrontline : PvpTargetKind.SelfHero;
+        PvpTargetKind relatedSecondaryTarget = label == "Frontline" ? PvpTargetKind.SelfHero : PvpTargetKind.SelfFrontline;
+
+        List<string> relevant = operations
+            .Where(operation => operation.TargetPlayerId == playerId &&
+                (NormalizeFriendlyTarget(operation.TargetKind) == primaryTarget ||
+                 NormalizeFriendlyTarget(operation.TargetKind) == relatedSecondaryTarget))
+            .Select(FormatTraceOperation)
+            .TakeLast(8)
+            .ToList();
+
+        if (relevant.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        return $"{label} {playerId} prediction trace: {string.Join(" | ", relevant)}";
+    }
+
+    private static string FormatTraceOperation(PvpDeltaOperation operation)
+    {
+        string actionId = operation.RuntimeActionId?.ToString() ?? "-";
+        return $"id={actionId} {operation.Kind} {operation.Amount} -> {operation.TargetKind} via {operation.ModelEntry}";
+    }
+
+    private static PvpTargetKind NormalizeFriendlyTarget(PvpTargetKind kind)
+    {
+        return kind switch
+        {
+            PvpTargetKind.EnemyHero => PvpTargetKind.SelfHero,
+            PvpTargetKind.EnemyFrontline => PvpTargetKind.SelfFrontline,
+            _ => kind
+        };
     }
 }

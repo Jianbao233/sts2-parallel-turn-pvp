@@ -1,7 +1,9 @@
 param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
-    [switch]$DeploySecondary
+    [switch]$DeploySecondary,
+    [switch]$SmokeTestStartup,
+    [int]$SmokeTestTimeoutSeconds = 90
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,10 +21,12 @@ $SecondaryDirectConnectDir = Join-Path $SecondaryModsRoot "DirectConnectIP"
 $SecondaryLogsDir = Join-Path $SecondaryDataRoot "logs"
 $BundleModsDir = Join-Path $ToReleaseDir "mods"
 $ParallelTurnBundleDir = Join-Path $BundleModsDir "ParallelTurnPvp"
+$StartupSmokeTestScript = Join-Path $ProjectRoot "tools\local_fastmp\Invoke-ParallelTurnStartupSmokeTest.ps1"
 $DllName = "ParallelTurnPvp.dll"
 $PckName = "ParallelTurnPvp.pck"
 $ManifestName = "mod_manifest.json"
 $DirectConnectManifestName = "DirectConnectIP.json"
+$BuildStrategy = "publish"
 
 function Show-SecondaryDeployBlockedPopup {
     param(
@@ -57,20 +61,102 @@ function Copy-DirectoryContents {
     Copy-Item (Join-Path $SourceDir '*') -Destination $DestinationDir -Recurse -Force
 }
 
-Write-Host "=== ParallelTurnPvp Build ===" -ForegroundColor Cyan
-Write-Host "[1/4] publish ($Configuration)"
+function Invoke-DotnetCommand {
+    param(
+        [string[]]$Arguments,
+        [string]$WorkingDirectory
+    )
 
-Push-Location $SourceRoot
-try {
-    dotnet publish .\ParallelTurnPvp.csproj -c $Configuration --nologo
-    if ($LASTEXITCODE -ne 0) {
+    Push-Location $WorkingDirectory
+    try {
+        $output = & dotnet @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
+
+    if ($output) {
+        $output | ForEach-Object { Write-Host $_ }
+    }
+
+    return [PSCustomObject]@{
+        ExitCode = $exitCode
+        Output = @($output)
+    }
+}
+
+function Test-IsGodotExportLockFailure {
+    param(
+        [object[]]$OutputLines
+    )
+
+    if (-not $OutputLines -or $OutputLines.Count -eq 0) {
+        return $false
+    }
+
+    $patterns = @(
+        "Safe save failed",
+        "Cannot save file",
+        "editor_settings-4.5.tres",
+        "--export-pack",
+        "exited with code -1"
+    )
+
+    foreach ($line in $OutputLines) {
+        $text = [string]$line
+        foreach ($pattern in $patterns) {
+            if ($text -like "*$pattern*") {
+                return $true
+            }
+        }
+    }
+
+    return $false
+}
+
+Write-Host "=== ParallelTurnPvp Build ===" -ForegroundColor Cyan
+Write-Host "[1/5] publish/build ($Configuration)"
+
+$publishResult = Invoke-DotnetCommand -Arguments @("publish", ".\ParallelTurnPvp.csproj", "-c", $Configuration, "--nologo") -WorkingDirectory $SourceRoot
+$fallbackToBuild = $false
+if ($publishResult.ExitCode -ne 0) {
+    if (Test-IsGodotExportLockFailure -OutputLines $publishResult.Output) {
+        Write-Warning "dotnet publish failed due to likely Godot export lock. Falling back to dotnet build and reusing existing pck artifact."
+        $fallbackToBuild = $true
+        $BuildStrategy = "fallback-build"
+    }
+    else {
         throw "dotnet publish failed"
     }
 }
-finally {
-    Pop-Location
+
+if ($fallbackToBuild) {
+    $buildResult = Invoke-DotnetCommand -Arguments @("build", ".\ParallelTurnPvp.csproj", "-c", $Configuration, "--nologo") -WorkingDirectory $SourceRoot
+    if ($buildResult.ExitCode -ne 0) {
+        throw "dotnet build fallback failed"
+    }
+
+    $dllCandidates = @(
+        (Join-Path $SourceRoot ".godot\mono\temp\bin\$Configuration\$DllName"),
+        (Join-Path $SourceRoot ".godot\mono\temp\bin\$Configuration\publish\$DllName")
+    ) | Where-Object { Test-Path $_ }
+
+    if (-not $dllCandidates -or $dllCandidates.Count -eq 0) {
+        throw "Fallback build produced no $DllName candidate under .godot\mono\temp\bin\$Configuration."
+    }
+
+    $latestDll = $dllCandidates |
+        ForEach-Object { Get-Item $_ } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    New-Item -ItemType Directory -Path $ModsOutputDir -Force | Out-Null
+    Copy-Item $latestDll.FullName -Destination (Join-Path $ModsOutputDir $DllName) -Force
+    Write-Host "Fallback copied DLL: $($latestDll.FullName) -> $(Join-Path $ModsOutputDir $DllName)"
 }
 
+Write-Host "[2/5] verify artifacts"
 $requiredFiles = @(
     (Join-Path $ModsOutputDir $DllName),
     (Join-Path $ModsOutputDir $PckName),
@@ -82,7 +168,7 @@ if ($missing.Count -gt 0) {
     throw "Missing published artifacts: $($missing -join ', ')"
 }
 
-Write-Host "[2/4] snapshot to torelease"
+Write-Host "[3/5] snapshot to torelease"
 if (Test-Path $ToReleaseDir) {
     Get-ChildItem -Force $ToReleaseDir | Remove-Item -Recurse -Force
 }
@@ -160,7 +246,7 @@ SecondaryDataRoot=$SecondaryDataRoot
 "@
 Set-Content -Path (Join-Path $ToReleaseDir "last_build.txt") -Value $buildSummary -Encoding UTF8
 
-Write-Host "[3/4] secondary deploy $(if ($DeploySecondary) { '(enabled)' } else { '(skipped)' })"
+Write-Host "[4/5] secondary deploy $(if ($DeploySecondary) { '(enabled)' } else { '(skipped)' })"
 $secondaryDeployStatus = "skipped"
 if ($DeploySecondary) {
     try {
@@ -190,10 +276,24 @@ Close the game on the secondary machine, then rerun:
     }
 }
 
-Write-Host "[4/4] done" -ForegroundColor Green
+Write-Host "[5/5] startup smoke test $(if ($SmokeTestStartup) { '(enabled)' } else { '(skipped)' })"
+if ($SmokeTestStartup) {
+    if (-not (Test-Path $StartupSmokeTestScript)) {
+        throw "Startup smoke test script not found: $StartupSmokeTestScript"
+    }
+
+    & powershell -ExecutionPolicy Bypass -File $StartupSmokeTestScript -TimeoutSeconds $SmokeTestTimeoutSeconds
+    if ($LASTEXITCODE -ne 0) {
+        throw "Startup smoke test failed"
+    }
+}
+
+Write-Host "[5/5] done" -ForegroundColor Green
 Write-Host "  Mods output : $ModsOutputDir"
 Write-Host "  Snapshot    : $ToReleaseDir"
 Write-Host "  Bundle mods : $BundleModsDir"
 Write-Host "  Secondary   : $secondaryDeployStatus ($SecondaryModsRoot)"
 Write-Host "  Remote logs : $SecondaryLogsDir"
 Write-Host "  Direct IP   : $directConnectSummary"
+Write-Host "  Strategy    : $BuildStrategy"
+Write-Host "  Smoke test  : $(if ($SmokeTestStartup) { "passed" } else { "skipped" })"

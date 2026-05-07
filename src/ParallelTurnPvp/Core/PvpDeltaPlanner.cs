@@ -2,14 +2,27 @@ namespace ParallelTurnPvp.Core;
 
 public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
 {
+    private const string BoundPhylacteryPassiveModelEntry = "BOUND_PHYLACTERY_PASSIVE";
+    private const string EarlyLockRewardModelEntry = "EARLY_LOCK_REWARD";
+
     public PvpRoundDeltaPlan BuildDeltaPlan(PvpCombatSnapshot initialSnapshot, PvpRoundExecutionPlan plan)
     {
         DeltaPlanningState state = new(initialSnapshot);
         PvpRoundDeltaPlan deltaPlan = new() { RoundIndex = plan.RoundIndex };
 
+        foreach (PvpDeltaOperation passiveOperation in BuildRoundPassiveOperations(state))
+        {
+            deltaPlan.Operations.Add(passiveOperation);
+            state.Apply(passiveOperation);
+        }
+
         foreach (PvpExecutionStep step in plan.Steps)
         {
-            foreach (PvpDeltaOperation operation in BuildOperationsForStep(state, step))
+            foreach (PvpDeltaOperation operation in BuildOperationsForStep(
+                state,
+                step,
+                plan.FirstFinisherPlayerId,
+                PvpDelayedExecution.IsLiveDelayedApplyEnabled))
             {
                 deltaPlan.Operations.Add(operation);
                 state.Apply(operation);
@@ -19,7 +32,34 @@ public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
         return deltaPlan;
     }
 
-    private static IEnumerable<PvpDeltaOperation> BuildOperationsForStep(DeltaPlanningState state, PvpExecutionStep step)
+    private static IEnumerable<PvpDeltaOperation> BuildRoundPassiveOperations(DeltaPlanningState state)
+    {
+        if (state.RoundIndex <= 1)
+        {
+            yield break;
+        }
+
+        foreach (ulong playerId in state.GetTrackedPlayerIds())
+        {
+            // BoundPhylactery passive behavior in PvP v0:
+            // OstyCmd.Summon(1) upgrades a living frontline, or creates a fresh 1/1 if missing.
+            if (state.HasFrontline(playerId))
+            {
+                yield return CreatePassiveOperation(PvpResolutionPhase.Summon, PvpDeltaOperationKind.GainMaxHp, playerId, PvpTargetKind.SelfFrontline, 1);
+                yield return CreatePassiveOperation(PvpResolutionPhase.Summon, PvpDeltaOperationKind.Heal, playerId, PvpTargetKind.SelfFrontline, 1);
+            }
+            else
+            {
+                yield return CreatePassiveOperation(PvpResolutionPhase.Summon, PvpDeltaOperationKind.SummonFrontline, playerId, PvpTargetKind.SelfFrontline, 1);
+            }
+        }
+    }
+
+    private static IEnumerable<PvpDeltaOperation> BuildOperationsForStep(
+        DeltaPlanningState state,
+        PvpExecutionStep step,
+        ulong firstFinisherPlayerId,
+        bool delayedModeEnabled)
     {
         switch (step.ModelEntry)
         {
@@ -32,7 +72,7 @@ public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
             case "POKE":
                 return BuildAttackOperations(state, step, 6, requiresFrontlineAttacker: true);
             case "FRONTLINE_BRACE":
-                return [CreateOperation(step, PvpDeltaOperationKind.GainBlock, step.PlayerId, state.HasFrontline(step.PlayerId) ? PvpTargetKind.SelfFrontline : PvpTargetKind.SelfHero, 5)];
+                return [CreateOperation(step, PvpDeltaOperationKind.GainBlock, step.PlayerId, ResolveSelfFrontlinePreferredTarget(state, step), 5)];
             case "BREAK_FORMATION":
                 return BuildAttackOperations(state, step, 8, requiresFrontlineAttacker: false);
             case "BLOCK_POTION":
@@ -42,12 +82,33 @@ public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
             case "BLOOD_POTION":
                 return BuildBloodPotionOperations(state, step);
             case "FRONTLINE_SALVE":
-                return [CreateOperation(step, PvpDeltaOperationKind.Heal, step.PlayerId, state.HasFrontline(step.PlayerId) ? PvpTargetKind.SelfFrontline : PvpTargetKind.SelfHero, 8)];
+                return [CreateOperation(step, PvpDeltaOperationKind.Heal, step.PlayerId, ResolveSelfFrontlinePreferredTarget(state, step), 8)];
             case "END_TURN":
-                return [CreateOperation(step, PvpDeltaOperationKind.EndRoundMarker, step.PlayerId, PvpTargetKind.None, 0)];
+                return BuildEndTurnOperations(step, firstFinisherPlayerId, delayedModeEnabled);
             default:
                 return Array.Empty<PvpDeltaOperation>();
         }
+    }
+
+    private static IEnumerable<PvpDeltaOperation> BuildEndTurnOperations(PvpExecutionStep step, ulong firstFinisherPlayerId, bool delayedModeEnabled)
+    {
+        List<PvpDeltaOperation> operations = new();
+        if (delayedModeEnabled &&
+            firstFinisherPlayerId != 0 &&
+            step.PlayerId == firstFinisherPlayerId &&
+            PvpMatchRuntime.EarlyLockHealAmount > 0)
+        {
+            operations.Add(CreateSyntheticOperation(
+                step,
+                PvpDeltaOperationKind.Heal,
+                step.PlayerId,
+                PvpTargetKind.SelfHero,
+                PvpMatchRuntime.EarlyLockHealAmount,
+                EarlyLockRewardModelEntry));
+        }
+
+        operations.Add(CreateOperation(step, PvpDeltaOperationKind.EndRoundMarker, step.PlayerId, PvpTargetKind.None, 0));
+        return operations;
     }
 
     private static IEnumerable<PvpDeltaOperation> BuildAfterlifeOperations(DeltaPlanningState state, PvpExecutionStep step, int amount)
@@ -85,10 +146,10 @@ public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
 
     private static IEnumerable<PvpDeltaOperation> BuildAttackOperations(DeltaPlanningState state, PvpExecutionStep step, int amount, bool requiresFrontlineAttacker)
     {
-        if (requiresFrontlineAttacker && !state.HasFrontline(step.PlayerId))
-        {
-            return Array.Empty<PvpDeltaOperation>();
-        }
+        // At this stage the planner is bridging from actions that already executed in vanilla combat.
+        // Do not re-validate prerequisites like "requires a frontline attacker" here, because the
+        // live combat log has already proven the action was legal and resolved.
+        _ = requiresFrontlineAttacker;
 
         AttackResolution? resolution = state.ResolveAttack(step.Target);
         if (resolution == null)
@@ -122,6 +183,17 @@ public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
         };
     }
 
+    private static PvpTargetKind ResolveSelfFrontlinePreferredTarget(DeltaPlanningState state, PvpExecutionStep step)
+    {
+        PvpTargetKind explicitTarget = NormalizeFriendlyTarget(step.Target.Kind);
+        if (explicitTarget is PvpTargetKind.SelfFrontline or PvpTargetKind.SelfHero)
+        {
+            return explicitTarget;
+        }
+
+        return state.HasFrontline(step.PlayerId) ? PvpTargetKind.SelfFrontline : PvpTargetKind.SelfHero;
+    }
+
     private static PvpDeltaOperation CreateOperation(PvpExecutionStep step, PvpDeltaOperationKind kind, ulong targetPlayerId, PvpTargetKind targetKind, int amount)
     {
         return new PvpDeltaOperation
@@ -138,15 +210,60 @@ public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
         };
     }
 
+    private static PvpDeltaOperation CreateSyntheticOperation(
+        PvpExecutionStep step,
+        PvpDeltaOperationKind kind,
+        ulong targetPlayerId,
+        PvpTargetKind targetKind,
+        int amount,
+        string modelEntry)
+    {
+        return new PvpDeltaOperation
+        {
+            Phase = step.Phase,
+            Kind = kind,
+            SourcePlayerId = step.PlayerId,
+            TargetPlayerId = targetPlayerId,
+            TargetKind = targetKind,
+            Amount = amount,
+            Sequence = step.Sequence,
+            ModelEntry = modelEntry,
+            RuntimeActionId = step.RuntimeActionId
+        };
+    }
+
+    private static PvpDeltaOperation CreatePassiveOperation(PvpResolutionPhase phase, PvpDeltaOperationKind kind, ulong playerId, PvpTargetKind targetKind, int amount)
+    {
+        return new PvpDeltaOperation
+        {
+            Phase = phase,
+            Kind = kind,
+            SourcePlayerId = playerId,
+            TargetPlayerId = playerId,
+            TargetKind = targetKind,
+            Amount = amount,
+            Sequence = -1,
+            ModelEntry = BoundPhylacteryPassiveModelEntry,
+            RuntimeActionId = null
+        };
+    }
+
     private sealed class DeltaPlanningState
     {
         private readonly Dictionary<ulong, PlanningTargetInfo> _heroes;
         private readonly Dictionary<ulong, PlanningTargetInfo> _frontlines;
+        public int RoundIndex { get; }
 
         public DeltaPlanningState(PvpCombatSnapshot snapshot)
         {
+            RoundIndex = snapshot.RoundIndex;
             _heroes = snapshot.Heroes.ToDictionary(entry => entry.Key, entry => PlanningTargetInfo.FromSnapshot(entry.Key, PvpTargetKind.SelfHero, entry.Value));
             _frontlines = snapshot.Frontlines.ToDictionary(entry => entry.Key, entry => PlanningTargetInfo.FromSnapshot(entry.Key, PvpTargetKind.SelfFrontline, entry.Value));
+        }
+
+        public IEnumerable<ulong> GetTrackedPlayerIds()
+        {
+            return _heroes.Keys.Union(_frontlines.Keys).OrderBy(id => id);
         }
 
         public bool HasFrontline(ulong playerId)
@@ -183,7 +300,17 @@ public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
 
             if (target.Kind == PvpTargetKind.EnemyFrontline)
             {
-                return new AttackResolution { PrimaryPlayerId = target.OwnerPlayerId, PrimaryKind = HasFrontline(target.OwnerPlayerId) ? PvpTargetKind.EnemyFrontline : PvpTargetKind.EnemyHero, HeroPlayerId = target.OwnerPlayerId, IsIntercepted = false };
+                // Live-combat shell semantics:
+                // explicit frontline targeting applies only to frontline (no overflow spill).
+                // If frontline no longer exists at execution time, fallback to hero.
+                bool frontlineExists = HasFrontline(target.OwnerPlayerId);
+                return new AttackResolution
+                {
+                    PrimaryPlayerId = target.OwnerPlayerId,
+                    PrimaryKind = frontlineExists ? PvpTargetKind.EnemyFrontline : PvpTargetKind.EnemyHero,
+                    HeroPlayerId = target.OwnerPlayerId,
+                    IsIntercepted = false
+                };
             }
 
             return new AttackResolution { PrimaryPlayerId = target.OwnerPlayerId, PrimaryKind = target.Kind, HeroPlayerId = target.OwnerPlayerId, IsIntercepted = false };
@@ -197,7 +324,8 @@ public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
                 return amount;
             }
 
-            int blocked = Math.Min(target.Block, amount);
+            PlanningTargetInfo blockSource = ResolveBlockSource(playerId, target);
+            int blocked = Math.Min(blockSource.Block, amount);
             int remaining = Math.Max(amount - blocked, 0);
             return Math.Max(remaining - target.CurrentHp, 0);
         }
@@ -209,38 +337,63 @@ public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
             {
                 case PvpDeltaOperationKind.SummonFrontline:
                     PlanningTargetInfo frontline = GetOrCreateFrontline(operation.TargetPlayerId);
+                    // Summon semantics in PvP v0 are "fresh frontline instance":
+                    // never inherit previous max hp from a dead/revived carrier object.
                     frontline.Exists = operation.Amount > 0;
                     frontline.MaxHp = Math.Max(operation.Amount, 0);
                     frontline.CurrentHp = Math.Max(operation.Amount, 0);
                     frontline.Block = 0;
                     break;
                 case PvpDeltaOperationKind.GainMaxHp:
-                    if (target is { Exists: true }) target.MaxHp += operation.Amount;
+                    if (IsAliveTarget(target))
+                    {
+                        PlanningTargetInfo aliveTarget = target!;
+                        aliveTarget.MaxHp += operation.Amount;
+                    }
                     break;
                 case PvpDeltaOperationKind.Heal:
-                    if (target is { Exists: true }) target.CurrentHp = Math.Min(target.MaxHp, target.CurrentHp + operation.Amount);
+                    if (IsAliveTarget(target))
+                    {
+                        PlanningTargetInfo aliveTarget = target!;
+                        aliveTarget.CurrentHp = Math.Min(aliveTarget.MaxHp, aliveTarget.CurrentHp + operation.Amount);
+                    }
                     break;
                 case PvpDeltaOperationKind.GainBlock:
-                    if (target is { Exists: true }) target.Block += operation.Amount;
+                    if (IsAliveTarget(target))
+                    {
+                        PlanningTargetInfo aliveTarget = target!;
+                        aliveTarget.Block += operation.Amount;
+                    }
                     break;
                 case PvpDeltaOperationKind.Damage:
-                    if (target is { Exists: true })
+                    if (target is { Exists: true, CurrentHp: > 0 })
                     {
-                        int blocked = Math.Min(target.Block, operation.Amount);
-                        target.Block -= blocked;
+                        PlanningTargetInfo blockSource = ResolveBlockSource(operation.TargetPlayerId, target);
+                        int blocked = Math.Min(blockSource.Block, operation.Amount);
+                        blockSource.Block -= blocked;
                         int remaining = Math.Max(operation.Amount - blocked, 0);
                         if (remaining > 0)
                         {
                             target.CurrentHp = Math.Max(0, target.CurrentHp - remaining);
+                            if (target.CurrentHp <= 0)
+                            {
+                                target.Block = 0;
+                            }
+
                             if (target.IsFrontline && target.CurrentHp <= 0)
                             {
                                 target.Exists = false;
-                                target.Block = 0;
+                                target.MaxHp = 0;
                             }
                         }
                     }
                     break;
             }
+        }
+
+        private static bool IsAliveTarget(PlanningTargetInfo? target)
+        {
+            return target is { Exists: true, CurrentHp: > 0 };
         }
 
         private PlanningTargetInfo GetHero(ulong playerId)
@@ -273,6 +426,12 @@ public sealed class PvpDeltaPlanner : IPvpDeltaPlanner
             }
 
             return fallbackToHero ? GetHero(playerId) : null;
+        }
+
+        private PlanningTargetInfo ResolveBlockSource(ulong playerId, PlanningTargetInfo target)
+        {
+            _ = playerId;
+            return target;
         }
     }
 

@@ -45,36 +45,45 @@ public sealed class PvpPredictionEngine : IPvpPredictionEngine
                     frontline.Block = 0;
                     break;
                 case PvpDeltaOperationKind.GainMaxHp:
-                    if (target is { Exists: true })
+                    if (IsAliveTarget(target))
                     {
-                        target.MaxHp += operation.Amount;
+                        PredictionCreatureState aliveTarget = target!;
+                        aliveTarget.MaxHp += operation.Amount;
                     }
                     break;
                 case PvpDeltaOperationKind.Heal:
-                    if (target is { Exists: true })
+                    if (IsAliveTarget(target))
                     {
-                        target.CurrentHp = Math.Min(target.MaxHp, target.CurrentHp + operation.Amount);
+                        PredictionCreatureState aliveTarget = target!;
+                        aliveTarget.CurrentHp = Math.Min(aliveTarget.MaxHp, aliveTarget.CurrentHp + operation.Amount);
                     }
                     break;
                 case PvpDeltaOperationKind.GainBlock:
-                    if (target is { Exists: true })
+                    if (IsAliveTarget(target))
                     {
-                        target.Block += operation.Amount;
+                        PredictionCreatureState aliveTarget = target!;
+                        aliveTarget.Block += operation.Amount;
                     }
                     break;
                 case PvpDeltaOperationKind.Damage:
-                    if (target is { Exists: true })
+                    if (target is { Exists: true, CurrentHp: > 0 })
                     {
-                        int blocked = Math.Min(target.Block, operation.Amount);
-                        target.Block -= blocked;
+                        PredictionCreatureState blockSource = ResolveBlockSource(operation.TargetPlayerId, target);
+                        int blocked = Math.Min(blockSource.Block, operation.Amount);
+                        blockSource.Block -= blocked;
                         int remaining = Math.Max(operation.Amount - blocked, 0);
                         if (remaining > 0)
                         {
                             target.CurrentHp = Math.Max(0, target.CurrentHp - remaining);
+                            if (target.CurrentHp <= 0)
+                            {
+                                target.Block = 0;
+                            }
+
                             if (target.IsFrontline && target.CurrentHp <= 0)
                             {
                                 target.Exists = false;
-                                target.Block = 0;
+                                target.MaxHp = 0;
                             }
                         }
                     }
@@ -133,6 +142,17 @@ public sealed class PvpPredictionEngine : IPvpPredictionEngine
             }
 
             return fallbackToHero ? GetHero(playerId) : null;
+        }
+
+        private PredictionCreatureState ResolveBlockSource(ulong playerId, PredictionCreatureState target)
+        {
+            _ = playerId;
+            return target;
+        }
+
+        private static bool IsAliveTarget(PredictionCreatureState? target)
+        {
+            return target is { Exists: true, CurrentHp: > 0 };
         }
     }
 

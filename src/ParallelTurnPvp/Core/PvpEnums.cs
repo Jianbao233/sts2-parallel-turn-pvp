@@ -54,7 +54,13 @@ public enum PvpResolvedEventKind
     RoundStarted,
     ExecutionPlanBuilt,
     DeltaPlanBuilt,
+    DelayedPlanBuilt,
+    DelayedCommandPlanBuilt,
+    PlaybackPlanBuilt,
+    PlaybackEventScheduled,
     DeltaOperationScheduled,
+    DelayedCandidateScheduled,
+    DelayedCommandScheduled,
     PredictionBuilt,
     PredictionCompared,
     PhaseStarted,
@@ -87,5 +93,39 @@ public enum PvpDeltaOperationKind
     GainBlock,
     Damage,
     GainResource,
+    EndRoundMarker
+}
+
+public enum PvpPlaybackEventKind
+{
+    PhaseStarted,
+    SummonApplied,
+    BuffApplied,
+    RecoverApplied,
+    ResourceApplied,
+    DamageApplied,
+    EndRoundApplied,
+    StateSync
+}
+
+public enum PvpDelayedCandidateKind
+{
+    SafeSelfBlock,
+    SafeSelfHeal,
+    SafeSelfResource,
+    SafeSelfMaxHp,
+    SafeSelfSummon,
+    CrossDamage,
+    EndRoundMarker
+}
+
+public enum PvpDelayedCommandKind
+{
+    GainBlock,
+    Heal,
+    GainResource,
+    GainMaxHp,
+    SummonFrontline,
+    Damage,
     EndRoundMarker
 }
