@@ -66,6 +66,12 @@ public static class ParallelTurnChecksumCompareBypassPatch
             return false;
         }
 
+        if (PvpRuntimeRegistry.TryGet(runState) is { } runtime &&
+            (runtime.IsDisconnectedPendingResume || runtime.IsResumeRecoveryGraceActive || runtime.IsResumeRoundQuarantined))
+        {
+            return true;
+        }
+
         // Debug PvP no longer uses vanilla combat checksum parity as the primary
         // correctness source once host-authoritative read-only resolve is active.
         // That now includes:
@@ -104,6 +110,12 @@ internal static class ParallelTurnChecksumCompareBypassPatchAccess
         if (!runState.Modifiers.OfType<ParallelTurnPvpDebugModifier>().Any())
         {
             return false;
+        }
+
+        if (PvpRuntimeRegistry.TryGet(runState) is { } runtime &&
+            (runtime.IsDisconnectedPendingResume || runtime.IsResumeRecoveryGraceActive || runtime.IsResumeRoundQuarantined))
+        {
+            return true;
         }
 
         return ParallelTurnFrontlineHelper.IsSplitRoomActive(runState) ||

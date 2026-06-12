@@ -10,6 +10,7 @@ using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using HarmonyLib;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 
 namespace ParallelTurnPvp.Core;
 
@@ -89,6 +90,11 @@ public sealed class PvpNetBridge : IPvpSyncBridge
         public PvpPlanningFrame? Frame { get; set; }
     }
 
+    private sealed class ResumeLiveCombatStateHolder
+    {
+        public PvpResumeLiveCombatState? Value { get; set; }
+    }
+
     private static readonly HashSet<PvpResolvedEventKind> NetworkSummaryEventKinds =
     [
         PvpResolvedEventKind.RoundResolved,
@@ -119,10 +125,23 @@ public sealed class PvpNetBridge : IPvpSyncBridge
     private static readonly ConditionalWeakTable<RunState, RoundAlignState> RoundAlignStateTable = new();
     private static readonly ConditionalWeakTable<RunState, SubmissionLogThrottleState> SubmissionLogThrottleStateTable = new();
     private static readonly ConditionalWeakTable<RunState, PendingPlanningFrameState> PendingPlanningFrameStateTable = new();
+    private static readonly ConditionalWeakTable<RunState, ResumeLiveCombatStateHolder> ResumeLiveCombatStateTable = new();
+    private static readonly JsonSerializerOptions ResumeLiveCombatJsonOptions = new(JsonSerializerDefaults.Web);
     private static bool IsForceSwitchKickEnabled =>
         string.Equals(Environment.GetEnvironmentVariable(ForceSwitchKickEnv), "1", StringComparison.Ordinal);
     private static bool IsRoundNumberMutationEnabled =>
         !string.Equals(Environment.GetEnvironmentVariable(RoundNumberMutationEnv), "0", StringComparison.Ordinal);
+
+    private static bool ShouldUseRecoverySync(RunState runState)
+    {
+        if (PvpResolveConfig.ShouldUseHostAuthoritativeSnapshotSync(runState))
+        {
+            return true;
+        }
+
+        return PvpRuntimeRegistry.TryGet(runState) is { } runtime &&
+               (runtime.IsDisconnectedPendingResume || runtime.IsResumeRecoveryGraceActive);
+    }
 
     public static void EnsureRegistered()
     {
@@ -331,7 +350,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             return;
         }
 
-        if (!PvpResolveConfig.ShouldUseHostAuthoritativeSnapshotSync(runState))
+        if (!ShouldUseRecoverySync(runState))
         {
             return;
         }
@@ -531,7 +550,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             return;
         }
 
-        if (!PvpResolveConfig.ShouldUseHostAuthoritativeSnapshotSync(runState))
+        if (!ShouldUseRecoverySync(runState))
         {
             return;
         }
@@ -577,6 +596,44 @@ public sealed class PvpNetBridge : IPvpSyncBridge
         }
     }
 
+    public static bool TryResetClientResumeRequestRetryState(RunState runState)
+    {
+        if (!ClientResumeRequestStateTable.TryGetValue(runState, out ClientResumeRequestState? requestState) ||
+            requestState == null)
+        {
+            return false;
+        }
+
+        requestState.AttemptCount = 0;
+        requestState.LastSentUtc = default;
+        requestState.LastRequestedRoundIndex = 0;
+        requestState.LastRequestedSnapshotVersion = 0;
+        requestState.LastRequestedPlanningRevision = 0;
+        return true;
+    }
+
+    public static bool TryCacheResumeLiveCombatState(RunState runState, PvpResumeLiveCombatState? liveCombatState)
+    {
+        if (liveCombatState == null)
+        {
+            return false;
+        }
+
+        ResumeLiveCombatStateTable.GetOrCreateValue(runState).Value = liveCombatState;
+        return true;
+    }
+
+    public static bool TryApplyCachedResumeLiveCombatState(RunState runState, string source)
+    {
+        if (!ResumeLiveCombatStateTable.TryGetValue(runState, out ResumeLiveCombatStateHolder? holder) ||
+            holder?.Value == null)
+        {
+            return false;
+        }
+
+        return DirectConnectIpCompat.TryApplyAuthoritativeResumeLiveCombatState(runState, holder.Value, source);
+    }
+
     public static void PumpClientPlanningFrameResync(RunState runState)
     {
         if (!RunManager.Instance.IsInProgress || RunManager.Instance.NetService.Type != NetGameType.Client)
@@ -584,7 +641,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             return;
         }
 
-        if (!RunManager.Instance.NetService.IsConnected || !PvpResolveConfig.ShouldUseHostAuthoritativeSnapshotSync(runState))
+        if (!RunManager.Instance.NetService.IsConnected || !ShouldUseRecoverySync(runState))
         {
             return;
         }
@@ -742,6 +799,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             PvpArenaTopology roomTopology = Enum.IsDefined(typeof(PvpArenaTopology), message.roomTopology)
                 ? (PvpArenaTopology)message.roomTopology
                 : runtime.RoomSession.Topology;
+            runtime.ClearResumeRoundQuarantineIfAdvanced(message.roundIndex, "round_state_message");
             ResetRoundFromAuthoritativeState(
                 runtime,
                 runState,
@@ -750,7 +808,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
                 planningRevision: 1,
                 message.roomSessionId,
                 roomTopology);
-            if (PvpResolveConfig.ShouldUseHostAuthoritativeSnapshotSync(runState))
+            if (ShouldUseRecoverySync(runState))
             {
                 ApplyLiveSnapshot(runState, roundStartSnapshot);
                 TryAlignCombatRoundNumber(runState, message.roundIndex, "round_state_message");
@@ -763,6 +821,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
         }
         else
         {
+            runtime.ClearResumeRoundQuarantineIfAdvanced(message.roundIndex, "round_state_message_host");
             runtime.CurrentRound.RoundIndex = message.roundIndex;
             runtime.CurrentRound.Phase = phase;
             runtime.CurrentRound.SnapshotAtRoundStart = roundStartSnapshot;
@@ -813,7 +872,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
         }
 
         if (RunManager.Instance.NetService.Type == NetGameType.Client &&
-            PvpResolveConfig.ShouldUseHostAuthoritativeSnapshotSync(runState))
+            ShouldUseRecoverySync(runState))
         {
             if (runtime.CurrentRound.RoundIndex <= 0 || runtime.CurrentRound.SnapshotAtRoundStart.SnapshotVersion <= 0)
             {
@@ -1195,6 +1254,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             PvpArenaTopology roomTopology = Enum.IsDefined(typeof(PvpArenaTopology), message.roundState.roomTopology)
                 ? (PvpArenaTopology)message.roundState.roomTopology
                 : runtime.RoomSession.Topology;
+            runtime.ClearResumeRoundQuarantineIfAdvanced(message.roundState.roundIndex, "resume_round_state");
             PvpCombatSnapshot roundStartSnapshot = CreateSnapshotFromRoundStateMessage(runtime.CurrentRound.SnapshotAtRoundStart, message.roundState);
             PvpMatchPhase authoritativePhase = (PvpMatchPhase)message.roundState.phase;
             int authoritativeRevision = 1;
@@ -1224,7 +1284,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             }
 
             runtime.TryMarkRoundStateReceived(message.roundState.snapshotVersion);
-            if (PvpResolveConfig.ShouldUseHostAuthoritativeSnapshotSync(runState))
+            if (ShouldUseRecoverySync(runState))
             {
                 ApplyLiveSnapshot(runState, runtime.CurrentRound.SnapshotAtRoundStart);
                 TryAlignCombatRoundNumber(runState, message.roundState.roundIndex, "resume_round_state");
@@ -1276,7 +1336,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
                     }
 
                     runtime.ApplyAuthoritativeResult(authoritativeResult);
-                    if (PvpResolveConfig.ShouldUseHostAuthoritativeSnapshotSync(runState))
+                    if (ShouldUseRecoverySync(runState))
                     {
                         ApplyLiveSnapshot(runState, finalSnapshot);
                         TryAlignCombatRoundNumber(runState, message.roundResult.roundIndex, "resume_round_result");
@@ -1293,13 +1353,46 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             }
         }
 
+        if (message.hasLiveCombatState && !string.IsNullOrWhiteSpace(message.liveCombatStateJson))
+        {
+            try
+            {
+                PvpResumeLiveCombatState? liveCombatState = JsonSerializer.Deserialize<PvpResumeLiveCombatState>(message.liveCombatStateJson, ResumeLiveCombatJsonOptions);
+                if (liveCombatState != null)
+                {
+                    TryCacheResumeLiveCombatState(runState, liveCombatState);
+                    if (DirectConnectIpCompat.TryApplyAuthoritativeResumeLiveCombatState(runState, liveCombatState, "resume_live_combat_state"))
+                    {
+                        appliedAny = true;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[ParallelTurnPvp] Failed to deserialize/apply resume live combat state: {ex}");
+            }
+        }
+
         if (appliedAny)
         {
-            runtime.ClearDisconnectedPendingResume("resume_state_applied");
-            if (ClientResumeRequestStateTable.TryGetValue(runState, out ClientResumeRequestState? requestState))
+            runtime.MarkResumeStateAppliedWhilePending(
+                "resume_state_applied",
+                message.hasRoundState,
+                message.hasPlanningFrame,
+                message.hasRoundResult);
+
+            bool delayClearForRunningRejoin = string.Equals(runtime.DisconnectReason, "RunningRejoin", StringComparison.OrdinalIgnoreCase);
+            if (!delayClearForRunningRejoin)
             {
-                requestState.AttemptCount = 0;
-                requestState.LastSentUtc = default;
+                runtime.ClearDisconnectedPendingResume("resume_state_applied");
+                if (TryResetClientResumeRequestRetryState(runState))
+                {
+                    Log.Info("[ParallelTurnPvp] Reset client resume request retry state after resume_state_applied.");
+                }
+            }
+            else
+            {
+                Log.Info("[ParallelTurnPvp] Resume state metadata applied during running rejoin. Waiting for deferred live combat rehydrate before clearing disconnected-pending-resume.");
             }
         }
 
@@ -1762,6 +1855,13 @@ public sealed class PvpNetBridge : IPvpSyncBridge
             response.roundResult = CreateRoundResultMessage(latestResult, runtime);
         }
 
+        PvpResumeLiveCombatState? liveCombatState = DirectConnectIpCompat.CaptureAuthoritativeResumeLiveCombatState(runtime.RunState);
+        if (liveCombatState != null)
+        {
+            response.hasLiveCombatState = true;
+            response.liveCombatStateJson = JsonSerializer.Serialize(liveCombatState, ResumeLiveCombatJsonOptions);
+        }
+
         return response;
     }
 
@@ -2142,7 +2242,7 @@ public sealed class PvpNetBridge : IPvpSyncBridge
         if (!IsRoundNumberMutationEnabled ||
             RunManager.Instance.NetService.Type != NetGameType.Client ||
             targetRoundIndex <= 0 ||
-            !PvpResolveConfig.ShouldUseHostAuthoritativeSnapshotSync(runState))
+            !ShouldUseRecoverySync(runState))
         {
             return;
         }

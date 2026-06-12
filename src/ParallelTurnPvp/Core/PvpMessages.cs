@@ -659,6 +659,8 @@ public struct PvpResumeStateMessage : INetMessage
     public PvpPlanningFrameMessage planningFrame;
     public bool hasRoundResult;
     public PvpRoundResultMessage roundResult;
+    public bool hasLiveCombatState;
+    public string liveCombatStateJson;
 
     public bool ShouldBroadcast => false;
     public NetTransferMode Mode => NetTransferMode.Reliable;
@@ -685,6 +687,12 @@ public struct PvpResumeStateMessage : INetMessage
         if (hasRoundResult)
         {
             roundResult.Serialize(writer);
+        }
+
+        writer.WriteBool(hasLiveCombatState);
+        if (hasLiveCombatState)
+        {
+            writer.WriteString(liveCombatStateJson ?? string.Empty);
         }
     }
 
@@ -713,5 +721,40 @@ public struct PvpResumeStateMessage : INetMessage
             roundResult = default;
             roundResult.Deserialize(reader);
         }
+
+        hasLiveCombatState = reader.ReadBool();
+        liveCombatStateJson = hasLiveCombatState ? reader.ReadString() : string.Empty;
     }
+}
+
+public sealed class PvpResumeLiveCombatState
+{
+    public int RoundNumber { get; set; }
+    public int CurrentSide { get; set; }
+    public List<PvpResumeLivePlayerState> Players { get; set; } = new();
+}
+
+public sealed class PvpResumeLivePlayerState
+{
+    public ulong PlayerId { get; set; }
+    public int Energy { get; set; }
+    public int Stars { get; set; }
+    public int Gold { get; set; }
+    public PvpResumeCreatureState Hero { get; set; } = new();
+    public PvpResumeCreatureState Frontline { get; set; } = new();
+    public List<PvpResumeLivePileState> Piles { get; set; } = new();
+}
+
+public sealed class PvpResumeCreatureState
+{
+    public bool Exists { get; set; }
+    public int CurrentHp { get; set; }
+    public int MaxHp { get; set; }
+    public int Block { get; set; }
+}
+
+public sealed class PvpResumeLivePileState
+{
+    public int PileType { get; set; }
+    public List<string> CardsJson { get; set; } = new();
 }

@@ -1,4 +1,5 @@
 torelease/
+toRelease/
 src/ParallelTurnPvp/.godot/
 *.user
 *.tmp

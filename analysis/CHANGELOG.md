@@ -1,5 +1,28 @@
 ﻿# CHANGELOG
 
+## 2026-05-07 - Shared Combat Reconnect Authoritative Live Combat State
+- Extended PvpResumeStateMessage with a host-authored live-combat payload for reconnect recovery.
+- Host now serializes the current mid-round live combat state on resume:
+  - hero/frontline HP and block
+  - player energy / stars / gold
+  - hand / draw / discard / exhaust / play piles
+- Client now applies that authoritative live combat payload after resume metadata, and caches it for deferred reapply during running-session rejoin recovery.
+- Deferred recovery now prefers cached host live-combat state over the stale ClientRejoinResponse.combatState snapshot.
+- Goal:
+  - stop reconnect from restoring only round-start metadata,
+  - recover the actual mid-round combat shell instead of a fresh-turn baseline.
+## 2026-05-07 - Shared Combat Reconnect Delayed Unfreeze
+- Changed running-session rejoin from "clear pending resume as soon as ResumeState arrives" to a two-phase recovery:
+  - ResumeState now only marks authoritative metadata as applied while the client stays frozen,
+  - DirectConnectIP deferred recovery loop keeps reapplying NetFullCombatState,
+  - only after several deferred passes does the client clear disconnected-pending-resume and enter recovery grace.
+- Added explicit runtime tracking for reconnect recovery:
+  - HasAppliedResumeStateWhilePending
+  - MarkResumeStateAppliedWhilePending(...)
+- Added reusable retry-state reset helper for ResumeStateRequest bookkeeping.
+- Goal:
+  - stop running rejoin from unfreezing before the fresh combat shell finishes its own startup,
+  - prevent client hand / energy from snapping back to fresh-shell defaults immediately after reconnect.
 ## 2026-05-07 - Shared Combat Reconnect Resume Gate Fix
 - Fixed multiple reconnect-time shared-combat gates that were still split-room-only by mistake:
   - `PumpClientResumeStateRequest(...)`
@@ -980,3 +1003,16 @@ untimeActionId ordering whenever live action ids are available
 - Expanded `ResumeState` polling and live-snapshot restore from split-room-only gating to all debug-arena runs that use host-authoritative snapshot sync.
 - On client resume, authoritative `RoundState` now reapplies the round-start snapshot, and authoritative `RoundResult` can directly restore the final snapshot instead of waiting for a future `SwitchSides` hook.
 - Updated disconnect UI copy to reflect the current behavior: the session is frozen first, then the system attempts recovery before asking the player to restart.
+
+
+
+## 2026-05-07 - Shared Combat Reconnect StartTurn Hand Reapply
+- Root cause narrowed further: host-authoritative resume live combat state was already applying correct hand counts on the client, but the fresh shared-combat StartTurn flow still overwrote hand piles after reconnect.
+- Added an async StartTurn completion wrapper on the client to reapply cached authoritative resume live combat state after the original StartTurn task completes whenever reconnect recovery is still pending or in grace.
+- Goal: keep reconnect hand state from snapping back to a newly drawn default hand while preserving the already-fixed HP and energy sync.
+
+
+## 2026-05-07 - Shared Combat Reconnect Quarantined Current Round
+- Reverted the StartTurn-completion live-combat reapply experiment; it corrected visible hand counts but still left card object parity unstable and led to checksum divergence once the rejoined client played cards in the same round.
+- Added a reconnect current-round quarantine: after running-session resume clears pending state, the current round stays under vanilla checksum bypass until the next round starts, and the rejoined local client can only end the round instead of adding new card/potion actions in that quarantined round.
+- Rationale: shared-combat running rejoin can restore visible HP/energy and broad combat state, but current-round card object parity is not yet strong enough for safe mid-round continued play; next-round authoritative state remains the clean re-entry point.

@@ -149,10 +149,11 @@ public static class ParallelTurnSwitchSidesPatch
         }
 
         if (RunManager.Instance.NetService.Type == NetGameType.Client &&
-            ParallelTurnFrontlineHelper.IsSplitRoomActive(runStateForGuard))
+            (ParallelTurnFrontlineHelper.IsSplitRoomActive(runStateForGuard) || runtime.IsResumeRecoveryGraceActive))
         {
             runtime.MarkClientAwaitAuthoritativeResult(combatState.RoundNumber, runtime.CurrentRound.SnapshotAtRoundStart.SnapshotVersion);
-            Log.Info($"[ParallelTurnPvp] Client host-authority resolve path. Waiting for host authoritative round result. round={combatState.RoundNumber} snapshotVersion={runtime.CurrentRound.SnapshotAtRoundStart.SnapshotVersion}");
+            string sourceTag = runtime.IsResumeRecoveryGraceActive ? "resume_grace" : "split_room";
+            Log.Info($"[ParallelTurnPvp] Client host-authority resolve path. source={sourceTag} waiting for host authoritative round result. round={combatState.RoundNumber} snapshotVersion={runtime.CurrentRound.SnapshotAtRoundStart.SnapshotVersion}");
             return;
         }
 
@@ -196,9 +197,10 @@ public static class ParallelTurnSwitchSidesPatch
         var runtime = PvpRuntimeRegistry.GetOrCreate(runState);
 
         if (RunManager.Instance.NetService.Type == NetGameType.Client &&
-            ParallelTurnFrontlineHelper.IsSplitRoomActive(runState))
+            (ParallelTurnFrontlineHelper.IsSplitRoomActive(runState) || runtime.IsResumeRecoveryGraceActive))
         {
-            Log.Info($"[ParallelTurnPvp] SwitchSides postfix skipped local round start on client host-authority mode. liveRound={combatState.RoundNumber} pvpRound={runtime.CurrentRound.RoundIndex} phase={runtime.CurrentRound.Phase}");
+            string sourceTag = runtime.IsResumeRecoveryGraceActive ? "resume_grace" : "split_room";
+            Log.Info($"[ParallelTurnPvp] SwitchSides postfix skipped local round start on client host-authority mode. source={sourceTag} liveRound={combatState.RoundNumber} pvpRound={runtime.CurrentRound.RoundIndex} phase={runtime.CurrentRound.Phase}");
             return;
         }
 

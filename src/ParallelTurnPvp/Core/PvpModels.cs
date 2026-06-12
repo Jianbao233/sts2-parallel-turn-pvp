@@ -265,6 +265,7 @@ public sealed class PvpRoundState
 public sealed class PvpMatchRuntime
 {
     public const int EarlyLockHealAmount = 3;
+    private const int ResumeRecoveryGraceMs = 8000;
     private const int HostResolveWaitTimeoutMs = 1800;
     private const int HostResolveWaitLockedPeerGraceMs = 1200;
     private const int HostResolveWaitRecentSubmissionWindowMs = 1200;
@@ -285,6 +286,8 @@ public sealed class PvpMatchRuntime
     private int _clientAuthoritativeWaitLoggedSecond = -1;
     private int _clientAuthoritativeWaitWarnedRoundIndex;
     private DateTime _disconnectedSinceUtc;
+    private DateTime _resumeRecoveryGraceUntilUtc;
+    private int _resumeRoundQuarantineUntilAdvanceFromRound;
 
     public PvpMatchRuntime(RunState runState, IEnumerable<Player> players)
     {
@@ -312,10 +315,17 @@ public sealed class PvpMatchRuntime
     public int LastBroadcastPlanningRevision { get; private set; }
     public bool IsDisconnectedPendingResume { get; private set; }
     public string DisconnectReason { get; private set; } = string.Empty;
+    public bool HasAppliedResumeStateWhilePending { get; private set; }
+    public bool IsResumeRecoveryGraceActive => _resumeRecoveryGraceUntilUtc > DateTime.UtcNow;
+    public bool IsResumeRoundQuarantined => _resumeRoundQuarantineUntilAdvanceFromRound > 0 &&
+                                            CurrentRound.RoundIndex > 0 &&
+                                            CurrentRound.RoundIndex <= _resumeRoundQuarantineUntilAdvanceFromRound;
 
     public void BeginCombat(CombatState combatState)
     {
         ClearDisconnectedPendingResume("begin_combat");
+        ClearResumeRecoveryGrace("begin_combat");
+        ClearResumeRoundQuarantine("begin_combat");
         SnapshotVersion = 0;
         LastAuthoritativeResult = null;
         LastAuthoritativePlanningFrame = null;
@@ -332,6 +342,7 @@ public sealed class PvpMatchRuntime
 
     public void StartRoundFromLiveState(CombatState combatState, int roundIndex)
     {
+        ClearResumeRoundQuarantineIfAdvanced(roundIndex, "start_round_from_live_state");
         if (IsDisconnectedPendingResume)
         {
             Log.Warn($"[ParallelTurnPvp] StartRoundFromLiveState ignored: runtime disconnected pending resume. round={CurrentRound.RoundIndex} requested={roundIndex} reason={DisconnectReason}");
@@ -472,6 +483,14 @@ public sealed class PvpMatchRuntime
         if (IsDisconnectedPendingResume && action.ActorPlayerId == RoomSession.LocalPlayerId)
         {
             Log.Warn($"[ParallelTurnPvp] Ignored local action append while disconnected pending resume. player={action.ActorPlayerId} type={action.ActionType} model={action.ModelEntry} reason={DisconnectReason}");
+            return;
+        }
+
+        if (IsResumeRoundQuarantined &&
+            action.ActorPlayerId == RoomSession.LocalPlayerId &&
+            action.ActionType is not PvpActionType.EndRound)
+        {
+            Log.Warn($"[ParallelTurnPvp] Ignored local action append during reconnect round quarantine. player={action.ActorPlayerId} round={CurrentRound.RoundIndex} type={action.ActionType} model={action.ModelEntry}");
             return;
         }
 
@@ -948,6 +967,7 @@ public sealed class PvpMatchRuntime
         }
 
         DisconnectReason = normalizedReason;
+        HasAppliedResumeStateWhilePending = false;
         if (CurrentRound.RoundIndex > 0 &&
             CurrentRound.Phase != PvpMatchPhase.MatchEnd &&
             CurrentRound.Phase != PvpMatchPhase.RoundEnd)
@@ -968,8 +988,93 @@ public sealed class PvpMatchRuntime
         int elapsedMs = (int)Math.Max((DateTime.UtcNow - _disconnectedSinceUtc).TotalMilliseconds, 0d);
         IsDisconnectedPendingResume = false;
         DisconnectReason = string.Empty;
+        HasAppliedResumeStateWhilePending = false;
         _disconnectedSinceUtc = default;
         Log.Info($"[ParallelTurnPvp] Cleared disconnected-pending-resume. source={source} elapsedMs={elapsedMs}");
+        BeginResumeRecoveryGrace(source, ResumeRecoveryGraceMs);
+        QuarantineCurrentRoundAfterResume(source);
+    }
+
+    public void MarkResumeStateAppliedWhilePending(string source, bool hasRoundState, bool hasPlanningFrame, bool hasRoundResult)
+    {
+        if (!IsDisconnectedPendingResume)
+        {
+            return;
+        }
+
+        if (HasAppliedResumeStateWhilePending)
+        {
+            return;
+        }
+
+        HasAppliedResumeStateWhilePending = true;
+        Log.Info($"[ParallelTurnPvp] Marked pending resume metadata as applied. source={source} round={CurrentRound.RoundIndex} snapshotVersion={CurrentRound.SnapshotAtRoundStart.SnapshotVersion} hasRoundState={hasRoundState} hasPlanningFrame={hasPlanningFrame} hasRoundResult={hasRoundResult} reason={DisconnectReason}");
+    }
+
+    public void BeginResumeRecoveryGrace(string source, int durationMs)
+    {
+        int normalizedDurationMs = Math.Max(durationMs, 1000);
+        DateTime nextUntilUtc = DateTime.UtcNow.AddMilliseconds(normalizedDurationMs);
+        if (nextUntilUtc <= _resumeRecoveryGraceUntilUtc)
+        {
+            return;
+        }
+
+        _resumeRecoveryGraceUntilUtc = nextUntilUtc;
+        Log.Info($"[ParallelTurnPvp] Activated resume recovery grace. source={source} durationMs={normalizedDurationMs} untilUtc={_resumeRecoveryGraceUntilUtc:O}");
+    }
+
+    public void ClearResumeRecoveryGrace(string source)
+    {
+        if (_resumeRecoveryGraceUntilUtc == default)
+        {
+            return;
+        }
+
+        bool wasActive = IsResumeRecoveryGraceActive;
+        _resumeRecoveryGraceUntilUtc = default;
+        Log.Info($"[ParallelTurnPvp] Cleared resume recovery grace. source={source} wasActive={wasActive}");
+    }
+
+    public void ClearResumeRoundQuarantineIfAdvanced(int incomingRoundIndex, string source)
+    {
+        if (_resumeRoundQuarantineUntilAdvanceFromRound <= 0 || incomingRoundIndex <= _resumeRoundQuarantineUntilAdvanceFromRound)
+        {
+            return;
+        }
+
+        int previousRound = _resumeRoundQuarantineUntilAdvanceFromRound;
+        _resumeRoundQuarantineUntilAdvanceFromRound = 0;
+        Log.Info($"[ParallelTurnPvp] Cleared resume round quarantine. source={source} previousRound={previousRound} incomingRound={incomingRoundIndex}");
+    }
+
+    public void ClearResumeRoundQuarantine(string source)
+    {
+        if (_resumeRoundQuarantineUntilAdvanceFromRound <= 0)
+        {
+            return;
+        }
+
+        int previousRound = _resumeRoundQuarantineUntilAdvanceFromRound;
+        _resumeRoundQuarantineUntilAdvanceFromRound = 0;
+        Log.Info($"[ParallelTurnPvp] Cleared resume round quarantine. source={source} previousRound={previousRound}");
+    }
+
+    private void QuarantineCurrentRoundAfterResume(string source)
+    {
+        if (CurrentRound.RoundIndex <= 0 ||
+            CurrentRound.Phase is PvpMatchPhase.MatchEnd or PvpMatchPhase.RoundEnd)
+        {
+            return;
+        }
+
+        if (_resumeRoundQuarantineUntilAdvanceFromRound >= CurrentRound.RoundIndex)
+        {
+            return;
+        }
+
+        _resumeRoundQuarantineUntilAdvanceFromRound = CurrentRound.RoundIndex;
+        Log.Warn($"[ParallelTurnPvp] Quarantined current round after reconnect. source={source} round={CurrentRound.RoundIndex} localPlayer={RoomSession.LocalPlayerId}");
     }
 
     public bool TryGetNetworkSubmissionRevision(ulong playerId, out int revision)
