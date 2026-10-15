@@ -19,13 +19,12 @@ Current state: stable local checkpoint for two-machine debug testing.
 - in host-authoritative client read-only resolve mode, the client may queue and apply an authoritative live snapshot after round result delivery
 
 ## Project docs
-- [执行计划](./执行计划.md)
 - [架构分析与参考](./analysis/架构分析与参考.md)
-- [有限意图与并行回合设计定版](./analysis/有限意图与并行回合设计定版.md)
 - [稳定测试里程碑 2026-04-10](./analysis/稳定测试里程碑_2026-04-10.md)
 - [CHANGELOG](./analysis/CHANGELOG.md)
-- [待办清单](./analysis/待办清单.md)
 - [代码结构与工作交接](./analysis/代码结构与工作交接.md)
+
+Internal design drafts, execution plans and task lists are maintained separately in the private documentation workspace.
 
 ## Build
 From project root:

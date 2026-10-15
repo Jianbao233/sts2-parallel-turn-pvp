@@ -8,3 +8,9 @@ src/ParallelTurnPvp/.godot/
 *.log
 *.uid
 analysis/remote_logs/
+
+# Internal planning is maintained outside the source repository
+/执行计划.md
+/analysis/PVP_ShopDraft_SchemeC_Design_DRAFT.md
+/analysis/有限意图与并行回合设计定版.md
+/analysis/待办清单.md
